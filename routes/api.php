@@ -4,9 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\MessageController;
 use App\Http\Controllers\API\ActionController;
 use App\Http\Controllers\API\ActualiteController;
-use App\Http\Controllers\API\AdhesionController;
 use App\Http\Controllers\API\MembreController;
-use App\Http\Controllers\API\CotisationController;
 use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\MembreAuthController;
 use App\Http\Controllers\API\MembreEspaceController;
@@ -57,9 +55,6 @@ Route::prefix('v1')->group(function () {
     // Voir un message spécifique (PUBLIC si vous voulez)
     Route::get('/messages/{id}', [MessageController::class, 'show']);
     
-    // Adhésions - Créer une demande (PUBLIC)
-    Route::post('/adhesions', [AdhesionController::class, 'store']);
-    
     // Actualités - Routes publiques
     Route::get('/actualites', [ActualiteController::class, 'index']);
     Route::get('/actualites/type/{type}', [ActualiteController::class, 'getByType']);
@@ -99,16 +94,12 @@ Route::prefix('v1')->group(function () {
     // Statistiques publiques - Chiffres clés réels pour la page d'accueil
     Route::get('/statistiques-publiques', [StatistiquesPubliquesController::class, 'index']);
 
-    // Paiements FedaPay - Routes publiques (un visiteur ou un membre paie sans être connecté)
-    Route::post('/paiements/cotisation', [PaiementController::class, 'initierCotisation']);
+    // Paiements FedaPay - Route publique (un visiteur ou un membre paie sans être connecté)
     Route::post('/paiements/evenements/{id}', [PaiementController::class, 'initierEvenement']);
 });
 
 // Webhook FedaPay (PUBLIC — appelé par les serveurs FedaPay, pas par le navigateur)
 Route::post('/v1/paiements/webhook', [PaiementController::class, 'webhook']);
-
-// Détail d'une adhésion (PUBLIC — ex : page de suivi de candidature par lien direct)
-Route::get('/adhesions/{id}/details', [AdhesionController::class, 'show']);
 
 // Routes pour les images (PUBLIQUES - sans authentification)
 Route::prefix('images')->group(function () {
@@ -167,40 +158,6 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
             ->middleware('role:super_admin,admin');
         Route::delete('/{id}', [ActionController::class, 'destroy'])
             ->middleware('role:super_admin');
-    });
-
-    // ========== ADHÉSIONS ==========
-    // Lecture : les 3 rôles. Traiter (approuver/rejeter) : admin/super_admin.
-    // Supprimer : super_admin uniquement.
-    Route::prefix('adhesions')->group(function () {
-        Route::get('/statistiques', [AdhesionController::class, 'statistiques']);
-        Route::get('/', [AdhesionController::class, 'index']);
-        Route::get('/{id}', [AdhesionController::class, 'show']);
-        Route::put('/{id}/traiter', [AdhesionController::class, 'traiter'])
-            ->middleware('role:super_admin,admin');
-        Route::delete('/{id}', [AdhesionController::class, 'destroy'])
-            ->middleware('role:super_admin');
-    });
-
-    // ========== COTISATIONS ==========
-    // Données financières internes : lecture réservée aux comptes admin (pas de route publique).
-    // Marquer payé/impayé : admin/super_admin uniquement.
-    Route::prefix('cotisations')->group(function () {
-        // Lecture : restreint aux rôles ayant besoin de voir les données financières
-        // (jusqu'ici ouvert à tout compte admin authentifié, y compris moderateur —
-        // corrigé ici en même temps que l'ajout du rôle tresorier).
-        Route::get('/', [CotisationController::class, 'index'])
-            ->middleware('role:super_admin,admin,tresorier');
-        Route::get('/statistiques', [CotisationController::class, 'statistiques'])
-            ->middleware('role:super_admin,admin,tresorier');
-        Route::get('/export', [CotisationController::class, 'export'])
-            ->middleware('role:super_admin,admin,tresorier');
-        Route::get('/membre/{id}', [CotisationController::class, 'historiqueMembre'])
-            ->middleware('role:super_admin,admin,tresorier');
-        Route::post('/marquer', [CotisationController::class, 'marquer'])
-            ->middleware('role:super_admin,admin,tresorier');
-        Route::post('/verifier-retards', [CotisationController::class, 'verifierRetards'])
-            ->middleware('role:super_admin,tresorier');
     });
 
     // ========== MEMBRES ==========
@@ -317,7 +274,6 @@ Route::middleware(['auth:sanctum', 'membre'])->prefix('v1/membre')->group(functi
     });
 
     Route::put('/profil', [MembreEspaceController::class, 'updateProfil']);
-    Route::get('/mes-cotisations', [CotisationController::class, 'mesCotisations']);
     Route::get('/evenements', [MembreEspaceController::class, 'evenements']);
     Route::post('/evenements/{id}/inscription', [MembreEspaceController::class, 'inscrire']);
     Route::delete('/evenements/{id}/inscription', [MembreEspaceController::class, 'desinscrire']);

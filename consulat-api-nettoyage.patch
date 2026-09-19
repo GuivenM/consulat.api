@@ -1,0 +1,1758 @@
+diff --git a/app/Console/Commands/VerifierRetardsCotisations.php b/app/Console/Commands/VerifierRetardsCotisations.php
+deleted file mode 100644
+index 81263fd..0000000
+--- a/app/Console/Commands/VerifierRetardsCotisations.php
++++ /dev/null
+@@ -1,94 +0,0 @@
+-<?php
+-
+-namespace App\Console\Commands;
+-
+-use App\Mail\CotisationRappel;
+-use App\Mail\MembreRadieAutomatiquement;
+-use App\Models\Membre;
+-use App\Models\User;
+-use Illuminate\Console\Command;
+-use Illuminate\Support\Facades\Mail;
+-
+-class VerifierRetardsCotisations extends Command
+-{
+-    /**
+-     * php artisan cotisations:verifier-retards
+-     * Prévu pour tourner une fois par mois, après la date limite de paiement
+-     * (Article 2 : cotisation due au plus tard le 10 de chaque mois) — voir
+-     * routes/console.php pour la planification.
+-     */
+-    protected $signature = 'cotisations:verifier-retards';
+-
+-    protected $description = "Envoie rappels/avertissements de cotisation et radie automatiquement les membres à 3 mois consécutifs d'impayé (Règlement intérieur, Article 3)";
+-
+-    public function handle(): int
+-    {
+-        $membres = Membre::actif()->get();
+-
+-        $nbRappels = 0;
+-        $nbAvertissements = 0;
+-        $nbRadiations = 0;
+-
+-        foreach ($membres as $membre) {
+-            if (!$membre->email) {
+-                continue;
+-            }
+-
+-            $retard = $membre->retardCotisationConsecutif();
+-
+-            if ($retard >= 3) {
+-                $membre->update([
+-                    'statut' => 'inactif',
+-                    'motif_inactivation' => "Radiation automatique : {$retard} mois consécutifs de cotisation impayée "
+-                        . "(Règlement intérieur, Article 3), le " . now()->format('d/m/Y'),
+-                ]);
+-
+-                \App\Models\JournalActivite::enregistrer(
+-                    'membre.radiation_auto',
+-                    "Radiation automatique : {$membre->nom_complet} ({$retard} mois consécutifs impayés)",
+-                    $membre
+-                );
+-
+-                $this->envoyerSansBloquer(fn () => Mail::to($membre->email)
+-                    ->send(new MembreRadieAutomatiquement($membre, $retard)));
+-
+-                $destinatairesBureau = User::whereIn('role', ['super_admin', 'tresorier'])
+-                    ->where('est_actif', true)
+-                    ->pluck('email');
+-                foreach ($destinatairesBureau as $emailBureau) {
+-                    $this->envoyerSansBloquer(fn () => Mail::to($emailBureau)
+-                        ->send(new MembreRadieAutomatiquement($membre, $retard, pourBureau: true)));
+-                }
+-
+-                $nbRadiations++;
+-                $this->line("Radié : {$membre->nom_complet} ({$retard} mois)");
+-            } elseif ($retard === 2) {
+-                $this->envoyerSansBloquer(fn () => Mail::to($membre->email)
+-                    ->send(new CotisationRappel($membre, $retard, avertissementFinal: true)));
+-                $nbAvertissements++;
+-            } elseif ($retard === 1) {
+-                $this->envoyerSansBloquer(fn () => Mail::to($membre->email)
+-                    ->send(new CotisationRappel($membre, $retard)));
+-                $nbRappels++;
+-            }
+-        }
+-
+-        $this->info("Terminé : {$nbRappels} rappel(s), {$nbAvertissements} avertissement(s), {$nbRadiations} radiation(s).");
+-
+-        return self::SUCCESS;
+-    }
+-
+-    /**
+-     * Un email qui échoue (mauvaise config SMTP, etc.) ne doit jamais faire
+-     * planter le reste de la commande — la radiation elle-même a déjà eu
+-     * lieu, on ne fait que journaliser l'échec d'envoi.
+-     */
+-    private function envoyerSansBloquer(callable $envoi): void
+-    {
+-        try {
+-            $envoi();
+-        } catch (\Exception $e) {
+-            \Log::error('cotisations:verifier-retards — échec envoi email : ' . $e->getMessage());
+-        }
+-    }
+-}
+diff --git a/app/Http/Controllers/API/AdhesionController.php b/app/Http/Controllers/API/AdhesionController.php
+deleted file mode 100644
+index 4396872..0000000
+--- a/app/Http/Controllers/API/AdhesionController.php
++++ /dev/null
+@@ -1,510 +0,0 @@
+-<?php
+-
+-namespace App\Http\Controllers\API;
+-
+-use App\Http\Controllers\Controller;
+-use App\Models\Adhesion;
+-use App\Models\Membre;
+-use App\Mail\ConfirmationAdhesion;
+-use App\Mail\NotificationTraitementAdhesion;
+-use App\Mail\NotificationNouvelleAdhesion;
+-use App\Mail\ActivationCompteMembre;
+-use Illuminate\Http\Request;
+-use Illuminate\Support\Facades\Validator;
+-use Illuminate\Support\Facades\Mail;
+-use Illuminate\Support\Str;
+-
+-class AdhesionController extends Controller
+-{
+-    /**
+-     * Afficher toutes les demandes d'adhésion
+-     */
+-    public function index()
+-    {
+-        try {
+-            $adhesions = Adhesion::orderBy('created_at', 'desc')->get();
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $adhesions,
+-                'message' => 'Demandes d\'adhésion récupérées avec succès'
+-            ], 200);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la récupération des demandes',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Afficher une demande spécifique
+-     */
+-    public function show($id)
+-    {
+-        try {
+-            $adhesion = Adhesion::findOrFail($id);
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $adhesion,
+-                'message' => 'Demande récupérée avec succès'
+-            ], 200);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Demande non trouvée'
+-            ], 404);
+-        }
+-    }
+-
+-    /**
+-     * Créer une nouvelle demande d'adhésion.
+-     *
+-     * Reflète le formulaire complet (ex Google Form) : nationalité et pièces,
+-     * état civil, statut professionnel avec branches étudiant/entrepreneur,
+-     * compétences/centres d'intérêt/langues, engagement associatif, et la
+-     * déclaration sur l'honneur. 4 uploads de fichiers (photo, carte
+-     * consulaire, CIPR, lettre au Président).
+-     */
+-    public function store(Request $request)
+-    {
+-        try {
+-            $validator = Validator::make($request->all(), [
+-                // --- Nationalité & pièces ---
+-                'est_congolais' => 'required|boolean',
+-                'nationalite' => 'nullable|string|max:255',
+-                'possede_carte_consulaire' => 'nullable|boolean',
+-                'duree_au_benin' => 'required|string|max:100',
+-                'possede_cipr' => 'nullable|boolean',
+-
+-                // --- Identité & état civil ---
+-                'nom' => 'required|string|max:255',
+-                'prenom' => 'required|string|max:255',
+-                'nom_marital' => 'nullable|string|max:255',
+-                'sexe' => 'required|in:masculin,feminin',
+-                'date_naissance' => 'required|date|before:today',
+-                'lieu_naissance' => 'required|string|max:255',
+-                'adresse' => 'required|string',
+-                'ville' => 'required|in:' . implode(',', Membre::VILLES_BENIN),
+-                'situation_matrimoniale' => 'required|in:marie,divorce,union_libre,celibataire,veuf',
+-                'nombre_enfants_charge' => 'required|integer|min:0',
+-
+-                // --- Pièces jointes ---
+-                'photo' => 'required|image|mimes:jpeg,png,jpg|max:10240',
+-                'carte_consulaire_fichier' => 'nullable|required_if:possede_carte_consulaire,1|file|mimes:jpeg,png,jpg,pdf|max:10240',
+-                'cipr_fichier' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:10240',
+-
+-                // --- Statut professionnel ---
+-                'profession' => 'required|in:etudiant,employe,entrepreneur,commercant,sans_emploi,autre',
+-                'profession_autre' => 'nullable|required_if:profession,autre|string|max:255',
+-                'niveau_etude' => 'required|string|max:255',
+-                'niveau_etude_autre' => 'nullable|string|max:255',
+-                'dernier_diplome' => 'required|string|max:255',
+-                'dernier_diplome_autre' => 'nullable|string|max:255',
+-
+-                // --- Branche Entrepreneur (si profession = entrepreneur) ---
+-                'entrepreneur_domaine' => 'nullable|required_if:profession,entrepreneur|string|max:255',
+-                'entrepreneur_domaine_autre' => 'nullable|string|max:255',
+-                'entrepreneur_duree' => 'nullable|required_if:profession,entrepreneur|string|max:100',
+-                'entrepreneur_nom_entreprise' => 'nullable|required_if:profession,entrepreneur|string|max:255',
+-                'entrepreneur_fonction' => 'nullable|string|max:255',
+-
+-                // --- Branche Étudiant (si profession = etudiant) ---
+-                'etablissement' => 'nullable|required_if:profession,etudiant|string|max:255',
+-                'etudiant_filiere' => 'nullable|required_if:profession,etudiant|string|max:255',
+-                'etudiant_annee' => 'nullable|required_if:profession,etudiant|string|max:50',
+-
+-                // --- Compétences, centres d'intérêt, loisirs, langues ---
+-                'competences' => 'required|array|min:1',
+-                'competences.*' => 'string|max:255',
+-                'competences_autre' => 'nullable|string|max:255',
+-                'centres_interet' => 'nullable|array',
+-                'centres_interet.*' => 'string|max:255',
+-                'domaines_interet_autre' => 'nullable|string|max:255',
+-                'loisirs' => 'required|array|min:1',
+-                'loisirs.*' => 'string|max:255',
+-                'loisirs_autre' => 'nullable|string|max:255',
+-                'disponibilite' => 'required|string|max:255',
+-                'langues' => 'nullable|array',
+-                'langues.*' => 'string|max:255',
+-
+-                // --- Engagement associatif ---
+-                'comment_connu' => 'required|string|max:255',
+-                'comment_connu_autre' => 'nullable|string|max:255',
+-                'recommande_par' => 'nullable|string|max:255',
+-                'motivation' => 'nullable|string',
+-                'experience_associative' => 'required|boolean',
+-                'experience_associative_details' => 'nullable|required_if:experience_associative,1|string',
+-                'commissions_souhaitees' => 'nullable|array',
+-                'commissions_souhaitees.*' => 'string|max:255',
+-                'attentes' => 'nullable|string',
+-
+-                // --- Coordonnées ---
+-                'email' => 'required|email|unique:adhesions,email',
+-                'telephone' => 'required|string|max:20',
+-                'autre_telephone' => 'nullable|string|max:20',
+-
+-                // --- Déclaration sur l'honneur ---
+-                'declarant_nom_complet' => 'required|string|max:255',
+-                'accepte_conditions' => 'required|accepted',
+-                'souhaite_recevoir_actualites' => 'required|boolean',
+-                'lettre_demande_fichiers' => 'nullable|array|max:5',
+-                'lettre_demande_fichiers.*' => 'file|mimes:jpeg,png,jpg,pdf,doc,docx|max:20480',
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            // IMPORTANT : on part UNIQUEMENT des champs validés (jamais $request->all()).
+-            // 'statut', 'date_traitement' et 'traite_par' ne sont pas dans les règles
+-            // ci-dessus et ne peuvent donc jamais être fixés par un appelant public —
+-            // sinon n'importe qui pourrait auto-approuver sa propre demande.
+-            $data = $validator->validated();
+-
+-            // Nationalité : déduite de la case "êtes-vous congolais(e)" si non précisée.
+-            $data['nationalite'] = $data['est_congolais']
+-                ? 'Congolaise'
+-                : ($data['nationalite'] ?? 'Non précisée');
+-
+-            // Photo (obligatoire, utilisée pour le badge)
+-            $data['photo'] = str_replace('public/', '', $request->file('photo')->store('adhesions/photos', 'public'));
+-
+-            // Carte consulaire (si le candidat déclare en posséder une)
+-            if ($request->hasFile('carte_consulaire_fichier')) {
+-                $data['carte_consulaire_fichier'] = str_replace(
+-                    'public/', '', $request->file('carte_consulaire_fichier')->store('adhesions/documents', 'public')
+-                );
+-            } else {
+-                unset($data['carte_consulaire_fichier']);
+-            }
+-
+-            // CIPR (optionnel)
+-            if ($request->hasFile('cipr_fichier')) {
+-                $data['cipr_fichier'] = str_replace(
+-                    'public/', '', $request->file('cipr_fichier')->store('adhesions/documents', 'public')
+-                );
+-            } else {
+-                unset($data['cipr_fichier']);
+-            }
+-
+-            // Lettre de demande au Président (jusqu'à 5 fichiers)
+-            if ($request->hasFile('lettre_demande_fichiers')) {
+-                $data['lettre_demande_fichiers'] = collect($request->file('lettre_demande_fichiers'))
+-                    ->map(fn($file) => str_replace('public/', '', $file->store('adhesions/lettres', 'public')))
+-                    ->values()
+-                    ->all();
+-            } else {
+-                unset($data['lettre_demande_fichiers']);
+-            }
+-
+-            $adhesion = Adhesion::create($data);
+-
+-            // Envoyer email de confirmation au candidat
+-            try {
+-                Mail::to($adhesion->email)->send(new ConfirmationAdhesion($adhesion));
+-            } catch (\Exception $e) {
+-                \Log::error('Erreur envoi email confirmation candidat: ' . $e->getMessage());
+-            }
+-
+-            // Envoyer notification à l'admin
+-            try {
+-                $adminEmail = config('mail.admin_address');
+-                if (!$adminEmail) {
+-                    $adminEmail = 'contact@ajdcb.org';
+-                }
+-                Mail::to($adminEmail)->send(new NotificationNouvelleAdhesion($adhesion));
+-            } catch (\Exception $e) {
+-                \Log::error('Erreur envoi email notification admin: ' . $e->getMessage());
+-            }
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Demande d\'adhésion soumise avec succès. Un email de confirmation vous a été envoyé.',
+-                'data' => $adhesion,
+-                'redirect_url' => config('app.frontend_url') . '/admin/adhesions/' . $adhesion->id
+-            ], 201);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la soumission de la demande',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Traiter une demande d'adhésion (approuver/rejeter)
+-     */
+-    public function traiter(Request $request, $id)
+-    {
+-        try {
+-            $validator = Validator::make($request->all(), [
+-                'statut' => 'required|in:approuvee,rejetee',
+-                'commentaire' => 'nullable|string'
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $adhesion = Adhesion::findOrFail($id);
+-
+-            $adhesion->update([
+-                'statut' => $request->statut,
+-                'commentaire_traitement' => $request->commentaire,
+-                'date_traitement' => now(),
+-                'traite_par' => auth()->id(),
+-            ]);
+-
+-            \App\Models\JournalActivite::enregistrer(
+-                'adhesion.traiter',
+-                "Demande d'adhésion de {$adhesion->prenom} {$adhesion->nom} : " . ($request->statut === 'approuvee' ? 'approuvée' : 'rejetée'),
+-                $adhesion
+-            );
+-
+-            if ($request->statut === 'approuvee') {
+-                // Le membre existe dès l'approbation, mais reste "en_attente_paiement"
+-                // tant que la cotisation initiale (1000F, cf. PaiementController) n'est
+-                // pas réglée. firstOrCreate évite un doublon si traiter() est rappelé.
+-                // Il peut néanmoins se connecter à son espace membre dès maintenant
+-                // (voir MembreAuthController) — un bandeau l'invite juste à régler
+-                // sa cotisation initiale.
+-                $membre = Membre::firstOrCreate(
+-                    ['adhesion_id' => $adhesion->id],
+-                    [
+-                        'nom' => $adhesion->nom,
+-                        'prenom' => $adhesion->prenom,
+-                        'photo' => $adhesion->photo,
+-                        'whatsapp' => $adhesion->telephone,
+-                        'ville' => $adhesion->ville,
+-                        'statut' => 'en_attente_paiement',
+-                        'email' => $adhesion->email,
+-                    ]
+-                );
+-
+-                // Compte membre pas encore activé (pas de mot de passe) : on
+-                // (re)génère un lien d'activation à chaque approbation.
+-                if (!$membre->password) {
+-                    $membre->update([
+-                        'email' => $membre->email ?: $adhesion->email,
+-                        'activation_token' => Str::random(64),
+-                        'activation_token_expire_at' => now()->addDays(7),
+-                    ]);
+-
+-                    try {
+-                        Mail::to($membre->email)->send(new ActivationCompteMembre($membre));
+-                    } catch (\Exception $e) {
+-                        \Log::error('Erreur envoi email activation membre: ' . $e->getMessage());
+-                    }
+-                }
+-            }
+-
+-            // Envoyer email de notification
+-            try {
+-                Mail::to($adhesion->email)->send(new NotificationTraitementAdhesion($adhesion));
+-            } catch (\Exception $e) {
+-                \Log::error('Erreur envoi email traitement: ' . $e->getMessage());
+-            }
+-
+-            $message = $request->statut === 'approuvee'
+-                ? 'Demande approuvée avec succès. Un email a été envoyé au candidat.'
+-                : 'Demande rejetée avec succès. Un email a été envoyé au candidat.';
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => $message,
+-                'data' => $adhesion,
+-                'redirect_url' => config('app.frontend_url') . '/admin/adhesions/' . $adhesion->id
+-            ], 200);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors du traitement de la demande',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Rejeter une demande d'adhésion
+-     */
+-    public function rejeter(Request $request, $id)
+-    {
+-        try {
+-            $validator = Validator::make($request->all(), [
+-                'motif' => 'required|string'
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $adhesion = Adhesion::findOrFail($id);
+-
+-            if ($adhesion->statut !== 'en_attente') {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Cette demande a déjà été traitée'
+-                ], 400);
+-            }
+-
+-            $adhesion->update([
+-                'statut' => 'rejetee',
+-                'commentaire_traitement' => $request->motif,
+-                'date_traitement' => now(),
+-                'traite_par' => auth()->id(),
+-            ]);
+-
+-            try {
+-                Mail::to($adhesion->email)->send(new NotificationTraitementAdhesion($adhesion));
+-            } catch (\Exception $e) {
+-                \Log::error('Erreur envoi email: ' . $e->getMessage());
+-            }
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Demande rejetée avec succès',
+-                'data' => $adhesion,
+-                'redirect_url' => config('app.frontend_url') . '/admin/adhesions/' . $adhesion->id
+-            ], 200);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors du rejet',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Statistiques des demandes d'adhésion
+-     */
+-    public function statistiques()
+-    {
+-        try {
+-            $stats = [
+-                'total' => Adhesion::count(),
+-                'en_attente' => Adhesion::where('statut', 'en_attente')->count(),
+-                'approuvees' => Adhesion::where('statut', 'approuvee')->count(),
+-                'rejetees' => Adhesion::where('statut', 'rejetee')->count(),
+-                'par_ville' => Adhesion::selectRaw('ville, count(*) as total')
+-                    ->groupBy('ville')
+-                    ->orderByDesc('total')
+-                    ->limit(10)
+-                    ->get(),
+-            ];
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $stats
+-            ], 200);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors du calcul des statistiques',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Supprimer une demande d'adhésion
+-     */
+-    public function destroy($id)
+-    {
+-        try {
+-            $adhesion = Adhesion::findOrFail($id);
+-            $nom = "{$adhesion->prenom} {$adhesion->nom}";
+-            $adhesion->delete();
+-
+-            \App\Models\JournalActivite::enregistrer(
+-                'adhesion.supprimer',
+-                "Demande d'adhésion supprimée : {$nom}"
+-            );
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Demande supprimée avec succès'
+-            ], 200);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la suppression de la demande',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Exporter les demandes en CSV
+-     */
+-    public function exporter(Request $request)
+-    {
+-        try {
+-            $query = Adhesion::query();
+-
+-            if ($request->has('statut') && $request->statut !== 'tous') {
+-                $query->where('statut', $request->statut);
+-            }
+-
+-            $adhesions = $query->orderBy('created_at', 'desc')->get();
+-
+-            $filename = "adhesions_ajdcb_" . now()->format('Y-m-d') . ".csv";
+-            $handle = fopen('php://temp', 'w');
+-
+-            fputcsv($handle, [
+-                'ID', 'Nom', 'Prénom', 'Email', 'Téléphone',
+-                'Ville', 'Profession', 'Statut', 'Date soumission', 'Date traitement'
+-            ]);
+-
+-            foreach ($adhesions as $adhesion) {
+-                fputcsv($handle, [
+-                    $adhesion->id,
+-                    $adhesion->nom,
+-                    $adhesion->prenom,
+-                    $adhesion->email,
+-                    $adhesion->telephone,
+-                    $adhesion->ville,
+-                    $adhesion->profession,
+-                    $adhesion->statut,
+-                    $adhesion->created_at->format('d/m/Y H:i'),
+-                    $adhesion->date_traitement ? $adhesion->date_traitement->format('d/m/Y H:i') : ''
+-                ]);
+-            }
+-
+-            rewind($handle);
+-            $content = stream_get_contents($handle);
+-            fclose($handle);
+-
+-            return response($content)
+-                ->header('Content-Type', 'text/csv')
+-                ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de l\'export',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-}
+diff --git a/app/Http/Controllers/API/CotisationController.php b/app/Http/Controllers/API/CotisationController.php
+deleted file mode 100644
+index d674873..0000000
+--- a/app/Http/Controllers/API/CotisationController.php
++++ /dev/null
+@@ -1,401 +0,0 @@
+-<?php
+-
+-namespace App\Http\Controllers\API;
+-
+-use App\Http\Controllers\Controller;
+-use App\Models\Cotisation;
+-use App\Models\Membre;
+-use Illuminate\Http\Request;
+-use Illuminate\Support\Facades\Artisan;
+-use Illuminate\Support\Facades\Auth;
+-use Illuminate\Support\Facades\Validator;
+-
+-class CotisationController extends Controller
+-{
+-    /**
+-     * Montant mensuel fixé par le règlement intérieur (Article 2).
+-     */
+-    const MONTANT_DEFAUT = 1000;
+-
+-    /**
+-     * Liste des cotisations d'un mois pour tous les membres actifs
+-     * (checklist « à jour / impayé » — combine les membres actifs et
+-     * les cotisations existantes, même quand aucune ligne n'existe encore).
+-     *
+-     * GET /v1/cotisations?mois=2026-08
+-     */
+-    public function index(Request $request)
+-    {
+-        try {
+-            $mois = $request->query('mois', now()->format('Y-m'));
+-
+-            if (!preg_match('/^\d{4}-\d{2}$/', $mois)) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Format de mois invalide, attendu AAAA-MM'
+-                ], 422);
+-            }
+-
+-            $membres = Membre::actif()
+-                ->when(request('ville'), fn($q, $ville) => $q->where('ville', $ville))
+-                ->orderBy('nom')
+-                ->get();
+-            $cotisations = Cotisation::where('mois', $mois)
+-                ->get()
+-                ->keyBy('membre_id');
+-
+-            $result = $membres->map(function ($membre) use ($cotisations, $mois) {
+-                // Un membre n'a rien à devoir pour un mois antérieur à son
+-                // adhésion — même règle que dans historiqueMembre().
+-                if ($membre->created_at->format('Y-m') > $mois) {
+-                    return [
+-                        'membre_id' => $membre->id,
+-                        'nom_complet' => $membre->nom_complet,
+-                        'photo_url' => $membre->photo_url,
+-                        'ville' => $membre->ville,
+-                        'mois' => $mois,
+-                        'cotisation_id' => null,
+-                        'montant' => null,
+-                        'statut' => 'anterieure_adhesion',
+-                        'date_paiement' => null,
+-                        'mode_paiement' => null,
+-                        'commentaire' => null,
+-                    ];
+-                }
+-
+-                $cotisation = $cotisations->get($membre->id);
+-                return [
+-                    'membre_id' => $membre->id,
+-                    'nom_complet' => $membre->nom_complet,
+-                    'photo_url' => $membre->photo_url,
+-                    'ville' => $membre->ville,
+-                    'mois' => $mois,
+-                    'cotisation_id' => $cotisation->id ?? null,
+-                    'montant' => $cotisation->montant ?? self::MONTANT_DEFAUT,
+-                    'statut' => $cotisation->statut ?? 'impayee',
+-                    'date_paiement' => $cotisation->date_paiement ?? null,
+-                    'mode_paiement' => $cotisation->mode_paiement ?? null,
+-                    'commentaire' => $cotisation->commentaire ?? null,
+-                ];
+-            });
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $result
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la récupération des cotisations',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Marquer une cotisation payée ou impayée pour un membre / un mois donné.
+-     * Crée la ligne si elle n'existe pas encore (upsert).
+-     *
+-     * POST /v1/cotisations/marquer
+-     */
+-    public function marquer(Request $request)
+-    {
+-        try {
+-            $validator = Validator::make($request->all(), [
+-                'membre_id' => 'required|exists:membres,id',
+-                'mois' => 'required|regex:/^\d{4}-\d{2}$/',
+-                'statut' => 'required|in:payee,impayee',
+-                'montant' => 'nullable|numeric|min:0',
+-                'date_paiement' => 'nullable|date',
+-                'mode_paiement' => 'nullable|in:especes,mobile_money,virement,autre',
+-                'commentaire' => 'nullable|string|max:500',
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $data = [
+-                'montant' => $request->input('montant', self::MONTANT_DEFAUT),
+-                'statut' => $request->statut,
+-                'commentaire' => $request->commentaire,
+-                'enregistre_par' => Auth::id(),
+-            ];
+-
+-            if ($request->statut === 'payee') {
+-                $data['date_paiement'] = $request->input('date_paiement', now()->toDateString());
+-                $data['mode_paiement'] = $request->input('mode_paiement', 'especes');
+-            } else {
+-                $data['date_paiement'] = null;
+-                $data['mode_paiement'] = null;
+-            }
+-
+-            $cotisation = Cotisation::updateOrCreate(
+-                ['membre_id' => $request->membre_id, 'mois' => $request->mois],
+-                $data
+-            );
+-
+-            $membreLabel = optional(Membre::find($request->membre_id))->nom_complet ?? "#{$request->membre_id}";
+-            \App\Models\JournalActivite::enregistrer(
+-                'cotisation.marquer',
+-                "Cotisation de {$membreLabel} pour {$request->mois} marquée " . ($request->statut === 'payee' ? 'payée' : 'impayée'),
+-                $cotisation
+-            );
+-
+-            // Même règle que côté FedaPay (PaiementController) : un premier
+-            // paiement confirmé, manuel ou en ligne, active le membre.
+-            if ($request->statut === 'payee') {
+-                Membre::where('id', $request->membre_id)
+-                    ->where('statut', 'en_attente_paiement')
+-                    ->update(['statut' => 'actif']);
+-            }
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => $request->statut === 'payee' ? 'Cotisation marquée payée' : 'Cotisation marquée impayée',
+-                'data' => $cotisation
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de l\'enregistrement de la cotisation',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Statistiques d'un mois : taux à jour, montant collecté, membres en retard.
+-     *
+-     * GET /v1/cotisations/statistiques?mois=2026-08
+-     */
+-    public function statistiques(Request $request)
+-    {
+-        try {
+-            $mois = $request->query('mois', now()->format('Y-m'));
+-            $finMois = \Carbon\Carbon::createFromFormat('Y-m', $mois)->endOfMonth();
+-
+-            $nbMembres = Membre::actif()->where('created_at', '<=', $finMois)->count();
+-            $cotisationsMois = Cotisation::where('mois', $mois)->get();
+-            $nbPayees = $cotisationsMois->where('statut', 'payee')->count();
+-            $montantCollecte = $cotisationsMois->where('statut', 'payee')->sum('montant');
+-            $montantAttendu = $nbMembres * self::MONTANT_DEFAUT;
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => [
+-                    'mois' => $mois,
+-                    'nb_membres' => $nbMembres,
+-                    'nb_payees' => $nbPayees,
+-                    'nb_impayees' => $nbMembres - $nbPayees,
+-                    'taux_a_jour' => $nbMembres > 0 ? round($nbPayees / $nbMembres * 100) : 0,
+-                    'montant_collecte' => $montantCollecte,
+-                    'montant_attendu' => $montantAttendu,
+-                ]
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors du calcul des statistiques',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Export CSV des cotisations d'un mois (respecte le même filtre statut
+-     * que la liste affichée côté admin : tous / a_jour / en_retard).
+-     *
+-     * GET /v1/cotisations/export?mois=2026-08&statut=tous
+-     */
+-    public function export(Request $request)
+-    {
+-        $mois = $request->query('mois', now()->format('Y-m'));
+-        $statutFiltre = $request->query('statut', 'tous'); // tous|a_jour|en_retard
+-
+-        if (!preg_match('/^\d{4}-\d{2}$/', $mois)) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Format de mois invalide, attendu AAAA-MM'
+-            ], 422);
+-        }
+-
+-        $membres = Membre::actif()->orderBy('nom')->get();
+-        $cotisations = Cotisation::where('mois', $mois)->get()->keyBy('membre_id');
+-
+-        $lignes = $membres->map(function ($membre) use ($cotisations, $mois) {
+-            if ($membre->created_at->format('Y-m') > $mois) {
+-                return [
+-                    'nom_complet' => $membre->nom_complet,
+-                    'statut' => 'anterieure_adhesion',
+-                    'montant' => null,
+-                    'date_paiement' => null,
+-                    'mode_paiement' => null,
+-                    'commentaire' => null,
+-                ];
+-            }
+-
+-            $c = $cotisations->get($membre->id);
+-            return [
+-                'nom_complet' => $membre->nom_complet,
+-                'statut' => $c->statut ?? 'impayee',
+-                'montant' => $c->montant ?? self::MONTANT_DEFAUT,
+-                'date_paiement' => $c->date_paiement ?? null,
+-                'mode_paiement' => $c->mode_paiement ?? null,
+-                'commentaire' => $c->commentaire ?? null,
+-            ];
+-        });
+-
+-        if ($statutFiltre === 'a_jour') {
+-            $lignes = $lignes->where('statut', 'payee');
+-        } elseif ($statutFiltre === 'en_retard') {
+-            $lignes = $lignes->where('statut', 'impayee');
+-        }
+-
+-        $modeLabels = [
+-            'especes' => 'Espèces',
+-            'mobile_money' => 'Mobile Money',
+-            'virement' => 'Virement',
+-            'autre' => 'Autre',
+-        ];
+-        $statutLabels = [
+-            'payee' => 'À jour',
+-            'impayee' => 'En retard',
+-            'anterieure_adhesion' => 'Pas encore membre',
+-        ];
+-
+-        $filename = "cotisations_{$mois}.csv";
+-
+-        return response()->streamDownload(function () use ($lignes, $modeLabels, $statutLabels) {
+-            $handle = fopen('php://output', 'w');
+-            // BOM UTF-8 pour qu'Excel affiche correctement les accents.
+-            fwrite($handle, "\xEF\xBB\xBF");
+-            fputcsv($handle, ['Membre', 'Statut', 'Montant (FCFA)', 'Date de paiement', 'Mode de paiement', 'Commentaire'], ';');
+-
+-            foreach ($lignes as $l) {
+-                fputcsv($handle, [
+-                    $l['nom_complet'],
+-                    $statutLabels[$l['statut']] ?? $l['statut'],
+-                    $l['montant'] ?? '',
+-                    $l['date_paiement'] ?? '',
+-                    $l['mode_paiement'] ? ($modeLabels[$l['mode_paiement']] ?? $l['mode_paiement']) : '',
+-                    $l['commentaire'] ?? '',
+-                ], ';');
+-            }
+-
+-            fclose($handle);
+-        }, $filename, [
+-            'Content-Type' => 'text/csv; charset=UTF-8',
+-        ]);
+-    }
+-
+-    /**
+-     * Historique des cotisations du membre connecté — même logique que
+-     * historiqueMembre(), mais l'id vient du token authentifié, jamais de
+-     * l'URL, pour qu'un membre ne puisse jamais consulter les cotisations
+-     * d'un autre membre.
+-     *
+-     * GET /v1/membre/mes-cotisations
+-     */
+-    public function mesCotisations(Request $request)
+-    {
+-        return $this->historiqueMembre($request->user()->id);
+-    }
+-
+-    /**
+-     * Historique des cotisations d'un membre (12 derniers mois) + alerte de
+-     * radiation si 3 mois consécutifs impayés (Règlement intérieur, Article 3).
+-     *
+-     * GET /v1/cotisations/membre/{id}
+-     */
+-    public function historiqueMembre($id)
+-    {
+-        try {
+-            $membre = Membre::findOrFail($id);
+-
+-            $moisAdhesion = $membre->created_at->format('Y-m');
+-
+-            $mois = collect(range(0, 11))
+-                ->map(fn($i) => now()->subMonths($i)->format('Y-m'))
+-                ->values();
+-
+-            $cotisations = Cotisation::where('membre_id', $id)
+-                ->whereIn('mois', $mois)
+-                ->get()
+-                ->keyBy('mois');
+-
+-            // Un mois antérieur à l'arrivée du membre n'est ni payé ni impayé :
+-            // il n'était tout simplement pas encore membre, donc rien à devoir.
+-            $historique = $mois->map(function ($m) use ($cotisations, $moisAdhesion) {
+-                if ($m < $moisAdhesion) {
+-                    return [
+-                        'mois' => $m,
+-                        'statut' => 'anterieure_adhesion',
+-                        'date_paiement' => null,
+-                        'montant' => null,
+-                    ];
+-                }
+-
+-                $c = $cotisations->get($m);
+-                return [
+-                    'mois' => $m,
+-                    'statut' => $c->statut ?? 'impayee',
+-                    'date_paiement' => $c->date_paiement ?? null,
+-                    'montant' => $c->montant ?? null,
+-                ];
+-            });
+-
+-            // Retard consécutif à partir du mois courant (Article 3 : radiation
+-            // automatique après 3 mois consécutifs de non-paiement), voir
+-            // Membre::retardCotisationConsecutif() — même logique que
+-            // cotisations:verifier-retards, qui agit dessus automatiquement.
+-            $retardConsecutif = $membre->retardCotisationConsecutif();
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => [
+-                    'membre' => $membre,
+-                    'historique' => $historique,
+-                    'retard_consecutif' => $retardConsecutif,
+-                    'alerte_radiation' => $retardConsecutif >= 3,
+-                ]
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Membre non trouvé'
+-            ], 404);
+-        }
+-    }
+-
+-    /**
+-     * Déclenchement manuel de la vérification des retards (rappels,
+-     * avertissements, radiation automatique — voir
+-     * cotisations:verifier-retards). Tourne aussi automatiquement chaque
+-     * mois via le planificateur (routes/console.php) ; ce bouton sert à
+-     * tester ou à forcer une vérification immédiate.
+-     *
+-     * POST /v1/cotisations/verifier-retards
+-     */
+-    public function verifierRetards()
+-    {
+-        try {
+-            Artisan::call('cotisations:verifier-retards');
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Vérification effectuée.',
+-                'detail' => trim(Artisan::output()),
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la vérification des retards',
+-                'error' => $e->getMessage(),
+-            ], 500);
+-        }
+-    }
+-}
+diff --git a/app/Http/Controllers/API/MembreAuthController.php b/app/Http/Controllers/API/MembreAuthController.php
+index 10b1594..1a683ef 100644
+--- a/app/Http/Controllers/API/MembreAuthController.php
++++ b/app/Http/Controllers/API/MembreAuthController.php
+@@ -15,7 +15,7 @@ class MembreAuthController extends Controller
+ {
+     /**
+      * Activation du compte : le membre définit son mot de passe via le
+-     * token reçu par email (voir AdhesionController::traiter).
++     * token reçu par email lors de la création de son accès.
+      */
+     public function activerCompte(Request $request)
+     {
+diff --git a/app/Http/Controllers/API/MembreController.php b/app/Http/Controllers/API/MembreController.php
+index 886e5ca..cf31aa0 100644
+--- a/app/Http/Controllers/API/MembreController.php
++++ b/app/Http/Controllers/API/MembreController.php
+@@ -409,7 +409,7 @@ public function postesBureau()
+ 
+     /**
+      * Les 77 communes du Bénin, pour le select "Ville" du formulaire membre
+-     * (et le filtre des pages Membres/Cotisations).
++     * (et le filtre de la page Membres).
+      */
+     public function villes()
+     {
+diff --git a/app/Http/Controllers/API/PaiementController.php b/app/Http/Controllers/API/PaiementController.php
+index 41ecd88..536032e 100644
+--- a/app/Http/Controllers/API/PaiementController.php
++++ b/app/Http/Controllers/API/PaiementController.php
+@@ -3,7 +3,6 @@
+ namespace App\Http\Controllers\API;
+ 
+ use App\Http\Controllers\Controller;
+-use App\Models\Cotisation;
+ use App\Models\Evenement;
+ use App\Models\Paiement;
+ use App\Services\FedaPayService;
+@@ -13,67 +12,6 @@
+ 
+ class PaiementController extends Controller
+ {
+-    /**
+-     * Initie un paiement FedaPay pour la cotisation mensuelle (Article 2 : 1000 FCFA).
+-     * Le membre_id est optionnel : à défaut, le paiement est enregistré avec les
+-     * coordonnées saisies et un admin le rapproche manuellement du bon membre.
+-     *
+-     * POST /v1/paiements/cotisation
+-     */
+-    public function initierCotisation(Request $request, FedaPayService $fedapay)
+-    {
+-        // Rétro-compat : on accepte encore un `mois` unique (string), en plus
+-        // du nouveau `mois` en tableau pour payer plusieurs mois d'un coup.
+-        $moisInput = $request->input('mois');
+-        if (is_string($moisInput)) {
+-            $request->merge(['mois' => [$moisInput]]);
+-        }
+-
+-        $validator = Validator::make($request->all(), [
+-            'membre_id' => 'nullable|exists:membres,id',
+-            'mois' => 'required|array|min:1|max:12',
+-            'mois.*' => 'regex:/^\d{4}-\d{2}$/',
+-            'nom_payeur' => 'nullable|string|max:255',
+-            'telephone_payeur' => 'nullable|string|max:30',
+-            'email_payeur' => 'nullable|email|max:255',
+-        ]);
+-
+-        if ($validator->fails()) {
+-            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+-        }
+-
+-        $data = $validator->validated();
+-        $membre = !empty($data['membre_id']) ? \App\Models\Membre::find($data['membre_id']) : null;
+-        // Un membre identifié (lien ou compte connecté) n'a rien à ressaisir :
+-        // on complète avec sa fiche, et pour le reste FedaPay demande le
+-        // numéro directement sur sa page de paiement (Mobile Money).
+-        $nomPayeur = $data['nom_payeur'] ?? $membre?->nom_complet;
+-        $telephonePayeur = $data['telephone_payeur'] ?? $membre?->whatsapp;
+-        $emailPayeur = $data['email_payeur'] ?? $membre?->email;
+-
+-        $moisListe = array_values(array_unique($data['mois']));
+-        $montant = CotisationController::MONTANT_DEFAUT * count($moisListe);
+-
+-        $paiement = Paiement::create([
+-            'type' => 'cotisation',
+-            'membre_id' => $data['membre_id'] ?? null,
+-            'mois' => $moisListe[0],
+-            'mois_liste' => $moisListe,
+-            'nom_payeur' => $nomPayeur,
+-            'telephone_payeur' => $telephonePayeur,
+-            'email_payeur' => $emailPayeur,
+-            'montant' => $montant,
+-            'devise' => 'XOF',
+-            'statut' => 'en_attente',
+-        ]);
+-
+-        $description = count($moisListe) > 1
+-            ? 'Cotisation AJDCB - ' . count($moisListe) . ' mois (' . implode(', ', $moisListe) . ')'
+-            : "Cotisation AJDCB - {$moisListe[0]}";
+-
+-        return $this->demarrerTransaction($fedapay, $paiement, $description, $nomPayeur, $telephonePayeur, $emailPayeur);
+-    }
+-
+     /**
+      * Initie un paiement FedaPay pour un billet d'événement payant.
+      *
+@@ -244,29 +182,6 @@ public function webhook(Request $request, FedaPayService $fedapay)
+      */
+     private function appliquerPaiementReussi(Paiement $paiement): void
+     {
+-        if ($paiement->type === 'cotisation' && $paiement->membre_id) {
+-            $moisListe = $paiement->mois_liste ?: [$paiement->mois];
+-            $montantParMois = count($moisListe) > 0 ? $paiement->montant / count($moisListe) : $paiement->montant;
+-
+-            foreach ($moisListe as $mois) {
+-                Cotisation::updateOrCreate(
+-                    ['membre_id' => $paiement->membre_id, 'mois' => $mois],
+-                    [
+-                        'montant' => $montantParMois,
+-                        'statut' => 'payee',
+-                        'date_paiement' => now()->toDateString(),
+-                        'mode_paiement' => 'mobile_money',
+-                        'commentaire' => 'Payé en ligne via FedaPay (paiement #' . $paiement->id . ')',
+-                    ]
+-                );
+-            }
+-
+-            // Premier paiement réussi d'un membre encore en attente : il devient actif.
+-            \App\Models\Membre::where('id', $paiement->membre_id)
+-                ->where('statut', 'en_attente_paiement')
+-                ->update(['statut' => 'actif']);
+-        }
+-
+         if ($paiement->type === 'evenement' && $paiement->evenement_id) {
+             Evenement::whereKey($paiement->evenement_id)->increment('nombre_inscrits');
+         }
+diff --git a/app/Mail/ConfirmationAdhesion.php b/app/Mail/ConfirmationAdhesion.php
+deleted file mode 100644
+index 508798d..0000000
+--- a/app/Mail/ConfirmationAdhesion.php
++++ /dev/null
+@@ -1,36 +0,0 @@
+-<?php
+-
+-namespace App\Mail;
+-
+-use App\Models\Adhesion;
+-use Illuminate\Bus\Queueable;
+-use Illuminate\Mail\Mailable;
+-use Illuminate\Mail\Mailables\Content;
+-use Illuminate\Mail\Mailables\Envelope;
+-use Illuminate\Queue\SerializesModels;
+-
+-class ConfirmationAdhesion extends Mailable
+-{
+-    use Queueable, SerializesModels;
+-
+-    public Adhesion $adhesion;
+-
+-    public function __construct(Adhesion $adhesion)
+-    {
+-        $this->adhesion = $adhesion;
+-    }
+-
+-    public function envelope(): Envelope
+-    {
+-        return new Envelope(
+-            subject: 'Confirmation de votre demande d\'adhésion - AJDCB',
+-        );
+-    }
+-
+-    public function content(): Content
+-    {
+-        return new Content(
+-            view: 'emails.confirmation-adhesion',
+-        );
+-    }
+-}
+\ No newline at end of file
+diff --git a/app/Mail/CotisationRappel.php b/app/Mail/CotisationRappel.php
+deleted file mode 100644
+index b7a91b7..0000000
+--- a/app/Mail/CotisationRappel.php
++++ /dev/null
+@@ -1,42 +0,0 @@
+-<?php
+-
+-namespace App\Mail;
+-
+-use App\Models\Membre;
+-use Illuminate\Bus\Queueable;
+-use Illuminate\Mail\Mailable;
+-use Illuminate\Mail\Mailables\Content;
+-use Illuminate\Mail\Mailables\Envelope;
+-use Illuminate\Queue\SerializesModels;
+-
+-class CotisationRappel extends Mailable
+-{
+-    use Queueable, SerializesModels;
+-
+-    public Membre $membre;
+-    public int $moisRetard;
+-    public bool $avertissementFinal;
+-
+-    public function __construct(Membre $membre, int $moisRetard, bool $avertissementFinal = false)
+-    {
+-        $this->membre = $membre;
+-        $this->moisRetard = $moisRetard;
+-        $this->avertissementFinal = $avertissementFinal;
+-    }
+-
+-    public function envelope(): Envelope
+-    {
+-        return new Envelope(
+-            subject: $this->avertissementFinal
+-                ? 'Cotisation AJDCB : dernier rappel avant radiation'
+-                : 'Rappel : votre cotisation AJDCB du mois',
+-        );
+-    }
+-
+-    public function content(): Content
+-    {
+-        return new Content(
+-            view: 'emails.cotisation-rappel',
+-        );
+-    }
+-}
+diff --git a/app/Mail/NotificationNouvelleAdhesion.php b/app/Mail/NotificationNouvelleAdhesion.php
+deleted file mode 100644
+index 19ec60c..0000000
+--- a/app/Mail/NotificationNouvelleAdhesion.php
++++ /dev/null
+@@ -1,37 +0,0 @@
+-<?php
+-// App\Mail\NotificationNouvelleAdhesion.php
+-
+-namespace App\Mail;
+-
+-use App\Models\Adhesion;
+-use Illuminate\Bus\Queueable;
+-use Illuminate\Mail\Mailable;
+-use Illuminate\Queue\SerializesModels;
+-
+-class NotificationNouvelleAdhesion extends Mailable
+-{
+-    use Queueable, SerializesModels;
+-
+-    public $adhesion;
+-
+-    public function __construct(Adhesion $adhesion)
+-    {
+-        $this->adhesion = $adhesion;
+-    }
+-
+-    public function build()
+-    {
+-        return $this->subject('Nouvelle demande d\'adhésion - AJDCB')
+-                    ->markdown('emails.nouvelle-adhesion')
+-                    ->with([
+-                        'nom' => $this->adhesion->nom,
+-                        'prenom' => $this->adhesion->prenom,
+-                        'email' => $this->adhesion->email,
+-                        'telephone' => $this->adhesion->telephone,
+-                        'ville' => $this->adhesion->ville,
+-                        'dashboardUrl' => url('/dashboard/adhesions/' . $this->adhesion->id),
+-                        'listeUrl' => url('/dashboard/adhesions')
+-                    ]);
+-    }
+-}
+-
+diff --git a/app/Mail/NotificationTraitementAdhesion.php b/app/Mail/NotificationTraitementAdhesion.php
+deleted file mode 100644
+index 22f9269..0000000
+--- a/app/Mail/NotificationTraitementAdhesion.php
++++ /dev/null
+@@ -1,40 +0,0 @@
+-<?php
+-
+-namespace App\Mail;
+-
+-use App\Models\Adhesion;
+-use Illuminate\Bus\Queueable;
+-use Illuminate\Mail\Mailable;
+-use Illuminate\Mail\Mailables\Content;
+-use Illuminate\Mail\Mailables\Envelope;
+-use Illuminate\Queue\SerializesModels;
+-
+-class NotificationTraitementAdhesion extends Mailable
+-{
+-    use Queueable, SerializesModels;
+-
+-    public Adhesion $adhesion;
+-
+-    public function __construct(Adhesion $adhesion)
+-    {
+-        $this->adhesion = $adhesion;
+-    }
+-
+-    public function envelope(): Envelope
+-    {
+-        $sujet = $this->adhesion->statut === 'approuvee' 
+-            ? 'Votre adhésion à l\'AJDCB a été approuvée' 
+-            : 'Statut de votre demande d\'adhésion à l\'AJDCB';
+-
+-        return new Envelope(
+-            subject: $sujet,
+-        );
+-    }
+-
+-    public function content(): Content
+-    {
+-        return new Content(
+-            view: 'emails.notification-traitement-adhesion',
+-        );
+-    }
+-}
+\ No newline at end of file
+diff --git a/app/Models/Adhesion.php b/app/Models/Adhesion.php
+deleted file mode 100644
+index 272150f..0000000
+--- a/app/Models/Adhesion.php
++++ /dev/null
+@@ -1,172 +0,0 @@
+-<?php
+-
+-namespace App\Models;
+-
+-use Illuminate\Support\Facades\Storage;
+-
+-use Illuminate\Database\Eloquent\Factories\HasFactory;
+-use Illuminate\Database\Eloquent\Model;
+-
+-class Adhesion extends Model
+-{
+-    use HasFactory;
+-
+-    protected $table = 'adhesions';
+-
+-    protected $fillable = [
+-        // Identité
+-        'nom', 'prenom', 'nom_marital', 'sexe', 'date_naissance', 'lieu_naissance',
+-        'situation_matrimoniale', 'nombre_enfants_charge',
+-        // Nationalité & pièces
+-        'nationalite', 'est_congolais', 'possede_carte_consulaire', 'carte_consulaire_fichier',
+-        'duree_au_benin', 'possede_cipr', 'cipr_fichier', 'photo',
+-        // Coordonnées
+-        'email', 'telephone', 'autre_telephone', 'adresse', 'ville',
+-        // Statut professionnel
+-        'profession', 'profession_autre', 'niveau_etude', 'niveau_etude_autre',
+-        'dernier_diplome', 'dernier_diplome_autre',
+-        // Entrepreneur
+-        'entrepreneur_domaine', 'entrepreneur_domaine_autre', 'entrepreneur_duree',
+-        'entrepreneur_nom_entreprise', 'entrepreneur_fonction',
+-        // Étudiant
+-        'etablissement', 'etudiant_filiere', 'etudiant_annee',
+-        // Compétences, intérêts, langues
+-        'competences', 'competences_autre', 'centres_interet', 'domaines_interet_autre',
+-        'loisirs', 'loisirs_autre', 'disponibilite', 'langues',
+-        // Engagement associatif
+-        'comment_connu', 'comment_connu_autre', 'recommande_par', 'motivation',
+-        'experience_associative', 'experience_associative_details', 'commissions_souhaitees', 'attentes',
+-        // Déclaration
+-        'declarant_nom_complet', 'accepte_conditions', 'souhaite_recevoir_actualites',
+-        'lettre_demande_fichiers',
+-        // Divers
+-        'commentaire',
+-        // Traitement
+-        'statut', 'date_traitement', 'commentaire_traitement', 'traite_par',
+-    ];
+-
+-    protected $casts = [
+-        'date_naissance' => 'date',
+-        'date_traitement' => 'datetime',
+-        'competences' => 'array',
+-        'centres_interet' => 'array',
+-        'loisirs' => 'array',
+-        'langues' => 'array',
+-        'commissions_souhaitees' => 'array',
+-        'lettre_demande_fichiers' => 'array',
+-        'est_congolais' => 'boolean',
+-        'possede_carte_consulaire' => 'boolean',
+-        'possede_cipr' => 'boolean',
+-        'experience_associative' => 'boolean',
+-        'accepte_conditions' => 'boolean',
+-        'souhaite_recevoir_actualites' => 'boolean',
+-        'nombre_enfants_charge' => 'integer',
+-        'created_at' => 'datetime',
+-        'updated_at' => 'datetime',
+-    ];
+-
+-    /**
+-     * Relations
+-     */
+-    public function traitePar()
+-    {
+-        return $this->belongsTo(User::class, 'traite_par');
+-    }
+-
+-    public function membre()
+-    {
+-        return $this->hasOne(Membre::class, 'adhesion_id');
+-    }
+-
+-    /**
+-     * Scopes
+-     */
+-    public function scopeEnAttente($query)
+-    {
+-        return $query->where('statut', 'en_attente');
+-    }
+-
+-    public function scopeApprouvee($query)
+-    {
+-        return $query->where('statut', 'approuvee');
+-    }
+-
+-    public function scopeRejetee($query)
+-    {
+-        return $query->where('statut', 'rejetee');
+-    }
+-
+-    public function scopeByVille($query, $ville)
+-    {
+-        return $query->where('ville', 'like', "%$ville%");
+-    }
+-
+-    protected $appends = ['nom_complet', 'age', 'statut_label', 'statut_color', 'date_soumission', 'date_naissance_format', 'photo_url', 'carte_consulaire_fichier_url', 'cipr_fichier_url', 'lettre_demande_fichiers_urls'];
+-
+-    /**
+-     * Accesseurs
+-     */
+-    public function getNomCompletAttribute()
+-    {
+-        return $this->prenom . ' ' . $this->nom;
+-    }
+-
+-    public function getAgeAttribute()
+-    {
+-        return $this->date_naissance?->age;
+-    }
+-
+-    public function getStatutLabelAttribute()
+-    {
+-        $labels = [
+-            'en_attente' => 'En attente',
+-            'approuvee' => 'Approuvée',
+-            'rejetee' => 'Rejetée'
+-        ];
+-
+-        return $labels[$this->statut] ?? $this->statut;
+-    }
+-
+-    public function getStatutColorAttribute()
+-    {
+-        $colors = [
+-            'en_attente' => 'warning',
+-            'approuvee' => 'success',
+-            'rejetee' => 'danger'
+-        ];
+-
+-        return $colors[$this->statut] ?? 'secondary';
+-    }
+-
+-    public function getDateSoumissionAttribute()
+-    {
+-        return $this->created_at->format('d/m/Y à H:i');
+-    }
+-
+-    public function getDateNaissanceFormatAttribute()
+-    {
+-        return $this->date_naissance?->format('d/m/Y');
+-    }
+-
+-    public function getPhotoUrlAttribute()
+-    {
+-        return $this->photo ? Storage::disk('public')->url($this->photo) : null;
+-    }
+-
+-    public function getCarteConsulaireFichierUrlAttribute()
+-    {
+-        return $this->carte_consulaire_fichier ? Storage::disk('public')->url($this->carte_consulaire_fichier) : null;
+-    }
+-
+-    public function getCiprFichierUrlAttribute()
+-    {
+-        return $this->cipr_fichier ? Storage::disk('public')->url($this->cipr_fichier) : null;
+-    }
+-
+-    public function getLettreDemandeFichiersUrlsAttribute()
+-    {
+-        return collect($this->lettre_demande_fichiers ?? [])
+-            ->map(fn($path) => Storage::disk('public')->url($path))
+-            ->values();
+-    }
+-}
+diff --git a/app/Models/Cotisation.php b/app/Models/Cotisation.php
+deleted file mode 100644
+index e7e5761..0000000
+--- a/app/Models/Cotisation.php
++++ /dev/null
+@@ -1,49 +0,0 @@
+-<?php
+-
+-namespace App\Models;
+-
+-use Illuminate\Database\Eloquent\Factories\HasFactory;
+-use Illuminate\Database\Eloquent\Model;
+-
+-class Cotisation extends Model
+-{
+-    use HasFactory;
+-
+-    protected $fillable = [
+-        'membre_id',
+-        'mois',
+-        'montant',
+-        'date_paiement',
+-        'mode_paiement',
+-        'statut',
+-        'commentaire',
+-        'enregistre_par',
+-    ];
+-
+-    protected $casts = [
+-        'date_paiement' => 'date',
+-        'montant' => 'decimal:2',
+-        'created_at' => 'datetime',
+-        'updated_at' => 'datetime',
+-    ];
+-
+-    public function membre()
+-    {
+-        return $this->belongsTo(Membre::class);
+-    }
+-
+-    public function enregistrePar()
+-    {
+-        return $this->belongsTo(User::class, 'enregistre_par');
+-    }
+-
+-    public function scopePayee($query)
+-    {
+-        return $query->where('statut', 'payee');
+-    }
+-
+-    public function scopeMois($query, $mois)
+-    {
+-        return $query->where('mois', $mois);
+-    }
+-}
+diff --git a/app/Models/JournalActivite.php b/app/Models/JournalActivite.php
+index 74dbe69..55217df 100644
+--- a/app/Models/JournalActivite.php
++++ b/app/Models/JournalActivite.php
+@@ -35,7 +35,7 @@ public function user()
+      *
+      * @param string $action Identifiant court, ex. 'membre.supprimer'
+      * @param string $description Résumé lisible, déjà formaté
+-     * @param Model|null $sujet Le modèle concerné (Membre, User, Cotisation...)
++     * @param Model|null $sujet Le modèle concerné (Membre, User, Demande...)
+      * @param array $donnees Contexte structuré additionnel, optionnel
+      */
+     public static function enregistrer(string $action, string $description, ?Model $sujet = null, array $donnees = []): void
+diff --git a/app/Models/Membre.php b/app/Models/Membre.php
+index 01fa026..2867fea 100644
+--- a/app/Models/Membre.php
++++ b/app/Models/Membre.php
+@@ -142,53 +142,11 @@ public function getACompteAdminAttribute()
+     /**
+      * Relations
+      */
+-    public function adhesion()
+-    {
+-        return $this->belongsTo(Adhesion::class);
+-    }
+-
+     public function compteAdmin()
+     {
+         return $this->hasOne(User::class);
+     }
+ 
+-    /**
+-     * Retard consécutif de cotisation, en mois, jusqu'au mois courant inclus
+-     * (Règlement intérieur, Article 3 : radiation automatique à 3 mois
+-     * consécutifs). S'arrête à un mois payé ou au mois d'adhésion — voir
+-     * cotisations:verifier-retards, qui agit sur cette valeur.
+-     */
+-    public function retardCotisationConsecutif(): int
+-    {
+-        $moisAdhesion = $this->created_at->format('Y-m');
+-
+-        $mois = collect(range(0, 11))->map(fn($i) => now()->subMonths($i)->format('Y-m'));
+-
+-        $cotisations = Cotisation::where('membre_id', $this->id)
+-            ->whereIn('mois', $mois)
+-            ->get()
+-            ->keyBy('mois');
+-
+-        $retard = 0;
+-        foreach ($mois as $m) {
+-            if ($m < $moisAdhesion) {
+-                break;
+-            }
+-            $statut = $cotisations->get($m)->statut ?? 'impayee';
+-            if ($statut !== 'impayee') {
+-                break;
+-            }
+-            $retard++;
+-        }
+-
+-        return $retard;
+-    }
+-
+-    public function cotisations()
+-    {
+-        return $this->hasMany(Cotisation::class);
+-    }
+-
+     public function evenements()
+     {
+         return $this->belongsToMany(Evenement::class, 'participations')
+diff --git a/routes/api.php b/routes/api.php
+index 8c3f52f..69f5554 100644
+--- a/routes/api.php
++++ b/routes/api.php
+@@ -4,9 +4,7 @@
+ use App\Http\Controllers\API\MessageController;
+ use App\Http\Controllers\API\ActionController;
+ use App\Http\Controllers\API\ActualiteController;
+-use App\Http\Controllers\API\AdhesionController;
+ use App\Http\Controllers\API\MembreController;
+-use App\Http\Controllers\API\CotisationController;
+ use App\Http\Controllers\API\AuthController;
+ use App\Http\Controllers\API\MembreAuthController;
+ use App\Http\Controllers\API\MembreEspaceController;
+@@ -57,9 +55,6 @@
+     // Voir un message spécifique (PUBLIC si vous voulez)
+     Route::get('/messages/{id}', [MessageController::class, 'show']);
+     
+-    // Adhésions - Créer une demande (PUBLIC)
+-    Route::post('/adhesions', [AdhesionController::class, 'store']);
+-    
+     // Actualités - Routes publiques
+     Route::get('/actualites', [ActualiteController::class, 'index']);
+     Route::get('/actualites/type/{type}', [ActualiteController::class, 'getByType']);
+@@ -99,17 +94,13 @@
+     // Statistiques publiques - Chiffres clés réels pour la page d'accueil
+     Route::get('/statistiques-publiques', [StatistiquesPubliquesController::class, 'index']);
+ 
+-    // Paiements FedaPay - Routes publiques (un visiteur ou un membre paie sans être connecté)
+-    Route::post('/paiements/cotisation', [PaiementController::class, 'initierCotisation']);
++    // Paiements FedaPay - Route publique (un visiteur ou un membre paie sans être connecté)
+     Route::post('/paiements/evenements/{id}', [PaiementController::class, 'initierEvenement']);
+ });
+ 
+ // Webhook FedaPay (PUBLIC — appelé par les serveurs FedaPay, pas par le navigateur)
+ Route::post('/v1/paiements/webhook', [PaiementController::class, 'webhook']);
+ 
+-// Détail d'une adhésion (PUBLIC — ex : page de suivi de candidature par lien direct)
+-Route::get('/adhesions/{id}/details', [AdhesionController::class, 'show']);
+-
+ // Routes pour les images (PUBLIQUES - sans authentification)
+ Route::prefix('images')->group(function () {
+     Route::get('/{type}/{filename}', [ImageController::class, 'show']);
+@@ -169,40 +160,6 @@
+             ->middleware('role:super_admin');
+     });
+ 
+-    // ========== ADHÉSIONS ==========
+-    // Lecture : les 3 rôles. Traiter (approuver/rejeter) : admin/super_admin.
+-    // Supprimer : super_admin uniquement.
+-    Route::prefix('adhesions')->group(function () {
+-        Route::get('/statistiques', [AdhesionController::class, 'statistiques']);
+-        Route::get('/', [AdhesionController::class, 'index']);
+-        Route::get('/{id}', [AdhesionController::class, 'show']);
+-        Route::put('/{id}/traiter', [AdhesionController::class, 'traiter'])
+-            ->middleware('role:super_admin,admin');
+-        Route::delete('/{id}', [AdhesionController::class, 'destroy'])
+-            ->middleware('role:super_admin');
+-    });
+-
+-    // ========== COTISATIONS ==========
+-    // Données financières internes : lecture réservée aux comptes admin (pas de route publique).
+-    // Marquer payé/impayé : admin/super_admin uniquement.
+-    Route::prefix('cotisations')->group(function () {
+-        // Lecture : restreint aux rôles ayant besoin de voir les données financières
+-        // (jusqu'ici ouvert à tout compte admin authentifié, y compris moderateur —
+-        // corrigé ici en même temps que l'ajout du rôle tresorier).
+-        Route::get('/', [CotisationController::class, 'index'])
+-            ->middleware('role:super_admin,admin,tresorier');
+-        Route::get('/statistiques', [CotisationController::class, 'statistiques'])
+-            ->middleware('role:super_admin,admin,tresorier');
+-        Route::get('/export', [CotisationController::class, 'export'])
+-            ->middleware('role:super_admin,admin,tresorier');
+-        Route::get('/membre/{id}', [CotisationController::class, 'historiqueMembre'])
+-            ->middleware('role:super_admin,admin,tresorier');
+-        Route::post('/marquer', [CotisationController::class, 'marquer'])
+-            ->middleware('role:super_admin,admin,tresorier');
+-        Route::post('/verifier-retards', [CotisationController::class, 'verifierRetards'])
+-            ->middleware('role:super_admin,tresorier');
+-    });
+-
+     // ========== MEMBRES ==========
+     // Lecture de TOUS les membres (actifs + inactifs), réservé à l'espace admin.
+     Route::get('/membres-admin/tous', [MembreController::class, 'tous']);
+@@ -317,7 +274,6 @@
+     });
+ 
+     Route::put('/profil', [MembreEspaceController::class, 'updateProfil']);
+-    Route::get('/mes-cotisations', [CotisationController::class, 'mesCotisations']);
+     Route::get('/evenements', [MembreEspaceController::class, 'evenements']);
+     Route::post('/evenements/{id}/inscription', [MembreEspaceController::class, 'inscrire']);
+     Route::delete('/evenements/{id}/inscription', [MembreEspaceController::class, 'desinscrire']);
+diff --git a/routes/console.php b/routes/console.php
+index 1b7cf60..3c9adf1 100644
+--- a/routes/console.php
++++ b/routes/console.php
+@@ -2,17 +2,7 @@
+ 
+ use Illuminate\Foundation\Inspiring;
+ use Illuminate\Support\Facades\Artisan;
+-use Illuminate\Support\Facades\Schedule;
+ 
+ Artisan::command('inspire', function () {
+     $this->comment(Inspiring::quote());
+ })->purpose('Display an inspiring quote');
+-
+-// Le 11 de chaque mois à 8h (lendemain de la date limite de paiement,
+-// Article 2 du règlement intérieur) : rappels, avertissements, et radiation
+-// automatique après 3 mois consécutifs d'impayé (Article 3).
+-// Nécessite que le cron du serveur appelle `php artisan schedule:run`
+-// chaque minute (crontab : * * * * * cd /chemin/du/projet && php artisan schedule:run >> /dev/null 2>&1)
+-Schedule::command('cotisations:verifier-retards')
+-    ->monthlyOn(11, '08:00')
+-    ->onOneServer();

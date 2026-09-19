@@ -142,51 +142,9 @@ class Membre extends Authenticatable
     /**
      * Relations
      */
-    public function adhesion()
-    {
-        return $this->belongsTo(Adhesion::class);
-    }
-
     public function compteAdmin()
     {
         return $this->hasOne(User::class);
-    }
-
-    /**
-     * Retard consécutif de cotisation, en mois, jusqu'au mois courant inclus
-     * (Règlement intérieur, Article 3 : radiation automatique à 3 mois
-     * consécutifs). S'arrête à un mois payé ou au mois d'adhésion — voir
-     * cotisations:verifier-retards, qui agit sur cette valeur.
-     */
-    public function retardCotisationConsecutif(): int
-    {
-        $moisAdhesion = $this->created_at->format('Y-m');
-
-        $mois = collect(range(0, 11))->map(fn($i) => now()->subMonths($i)->format('Y-m'));
-
-        $cotisations = Cotisation::where('membre_id', $this->id)
-            ->whereIn('mois', $mois)
-            ->get()
-            ->keyBy('mois');
-
-        $retard = 0;
-        foreach ($mois as $m) {
-            if ($m < $moisAdhesion) {
-                break;
-            }
-            $statut = $cotisations->get($m)->statut ?? 'impayee';
-            if ($statut !== 'impayee') {
-                break;
-            }
-            $retard++;
-        }
-
-        return $retard;
-    }
-
-    public function cotisations()
-    {
-        return $this->hasMany(Cotisation::class);
     }
 
     public function evenements()

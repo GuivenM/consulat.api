@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Models\Cotisation;
 use App\Models\Evenement;
 use App\Models\Paiement;
 use App\Services\FedaPayService;
@@ -13,67 +12,6 @@ use Illuminate\Support\Facades\Validator;
 
 class PaiementController extends Controller
 {
-    /**
-     * Initie un paiement FedaPay pour la cotisation mensuelle (Article 2 : 1000 FCFA).
-     * Le membre_id est optionnel : à défaut, le paiement est enregistré avec les
-     * coordonnées saisies et un admin le rapproche manuellement du bon membre.
-     *
-     * POST /v1/paiements/cotisation
-     */
-    public function initierCotisation(Request $request, FedaPayService $fedapay)
-    {
-        // Rétro-compat : on accepte encore un `mois` unique (string), en plus
-        // du nouveau `mois` en tableau pour payer plusieurs mois d'un coup.
-        $moisInput = $request->input('mois');
-        if (is_string($moisInput)) {
-            $request->merge(['mois' => [$moisInput]]);
-        }
-
-        $validator = Validator::make($request->all(), [
-            'membre_id' => 'nullable|exists:membres,id',
-            'mois' => 'required|array|min:1|max:12',
-            'mois.*' => 'regex:/^\d{4}-\d{2}$/',
-            'nom_payeur' => 'nullable|string|max:255',
-            'telephone_payeur' => 'nullable|string|max:30',
-            'email_payeur' => 'nullable|email|max:255',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
-        }
-
-        $data = $validator->validated();
-        $membre = !empty($data['membre_id']) ? \App\Models\Membre::find($data['membre_id']) : null;
-        // Un membre identifié (lien ou compte connecté) n'a rien à ressaisir :
-        // on complète avec sa fiche, et pour le reste FedaPay demande le
-        // numéro directement sur sa page de paiement (Mobile Money).
-        $nomPayeur = $data['nom_payeur'] ?? $membre?->nom_complet;
-        $telephonePayeur = $data['telephone_payeur'] ?? $membre?->whatsapp;
-        $emailPayeur = $data['email_payeur'] ?? $membre?->email;
-
-        $moisListe = array_values(array_unique($data['mois']));
-        $montant = CotisationController::MONTANT_DEFAUT * count($moisListe);
-
-        $paiement = Paiement::create([
-            'type' => 'cotisation',
-            'membre_id' => $data['membre_id'] ?? null,
-            'mois' => $moisListe[0],
-            'mois_liste' => $moisListe,
-            'nom_payeur' => $nomPayeur,
-            'telephone_payeur' => $telephonePayeur,
-            'email_payeur' => $emailPayeur,
-            'montant' => $montant,
-            'devise' => 'XOF',
-            'statut' => 'en_attente',
-        ]);
-
-        $description = count($moisListe) > 1
-            ? 'Cotisation AJDCB - ' . count($moisListe) . ' mois (' . implode(', ', $moisListe) . ')'
-            : "Cotisation AJDCB - {$moisListe[0]}";
-
-        return $this->demarrerTransaction($fedapay, $paiement, $description, $nomPayeur, $telephonePayeur, $emailPayeur);
-    }
-
     /**
      * Initie un paiement FedaPay pour un billet d'événement payant.
      *
@@ -244,29 +182,6 @@ class PaiementController extends Controller
      */
     private function appliquerPaiementReussi(Paiement $paiement): void
     {
-        if ($paiement->type === 'cotisation' && $paiement->membre_id) {
-            $moisListe = $paiement->mois_liste ?: [$paiement->mois];
-            $montantParMois = count($moisListe) > 0 ? $paiement->montant / count($moisListe) : $paiement->montant;
-
-            foreach ($moisListe as $mois) {
-                Cotisation::updateOrCreate(
-                    ['membre_id' => $paiement->membre_id, 'mois' => $mois],
-                    [
-                        'montant' => $montantParMois,
-                        'statut' => 'payee',
-                        'date_paiement' => now()->toDateString(),
-                        'mode_paiement' => 'mobile_money',
-                        'commentaire' => 'Payé en ligne via FedaPay (paiement #' . $paiement->id . ')',
-                    ]
-                );
-            }
-
-            // Premier paiement réussi d'un membre encore en attente : il devient actif.
-            \App\Models\Membre::where('id', $paiement->membre_id)
-                ->where('statut', 'en_attente_paiement')
-                ->update(['statut' => 'actif']);
-        }
-
         if ($paiement->type === 'evenement' && $paiement->evenement_id) {
             Evenement::whereKey($paiement->evenement_id)->increment('nombre_inscrits');
         }

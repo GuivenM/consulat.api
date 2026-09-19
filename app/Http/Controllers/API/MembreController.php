@@ -409,7 +409,7 @@ class MembreController extends Controller
 
     /**
      * Les 77 communes du Bénin, pour le select "Ville" du formulaire membre
-     * (et le filtre des pages Membres/Cotisations).
+     * (et le filtre de la page Membres).
      */
     public function villes()
     {

@@ -15,7 +15,7 @@ class MembreAuthController extends Controller
 {
     /**
      * Activation du compte : le membre définit son mot de passe via le
-     * token reçu par email (voir AdhesionController::traiter).
+     * token reçu par email lors de la création de son accès.
      */
     public function activerCompte(Request $request)
     {
