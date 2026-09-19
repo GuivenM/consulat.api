@@ -19,6 +19,9 @@ use App\Http\Controllers\API\StatistiquesPubliquesController;
 use App\Http\Controllers\API\UtilisateurController;
 use App\Http\Controllers\API\JournalActiviteController;
 use App\Http\Controllers\ImageController;
+use App\Http\Controllers\API\RessortissantAuthController;
+use App\Http\Controllers\API\DemandeController;
+use App\Http\Controllers\API\DemandeAdminController;
 
 // ==================== ROUTES PUBLIQUES ====================
 
@@ -318,4 +321,37 @@ Route::middleware(['auth:sanctum', 'membre'])->prefix('v1/membre')->group(functi
     Route::get('/evenements', [MembreEspaceController::class, 'evenements']);
     Route::post('/evenements/{id}/inscription', [MembreEspaceController::class, 'inscrire']);
     Route::delete('/evenements/{id}/inscription', [MembreEspaceController::class, 'desinscrire']);
+});
+
+Route::prefix('v1/ressortissant/auth')->group(function () {
+    Route::post('/inscrire', [RessortissantAuthController::class, 'inscrire']);
+    Route::post('/verifier-email', [RessortissantAuthController::class, 'verifierEmail']);
+    Route::post('/renvoyer-verification', [RessortissantAuthController::class, 'renvoyerVerification']);
+    Route::post('/login', [RessortissantAuthController::class, 'login']);
+    Route::post('/mot-de-passe-oublie', [RessortissantAuthController::class, 'motDePasseOublie']);
+    Route::post('/reinitialiser-mot-de-passe', [RessortissantAuthController::class, 'reinitialiserMotDePasse']);
+
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('/logout', [RessortissantAuthController::class, 'logout']);
+        Route::get('/me', [RessortissantAuthController::class, 'me']);
+        Route::post('/change-password', [RessortissantAuthController::class, 'changePassword']);
+    });
+});
+
+// Espace membre (ressortissant connecté)
+Route::prefix('v1/ressortissant')->middleware('auth:sanctum')->group(function () {
+    Route::get('/demandes/configuration/{type}', [DemandeController::class, 'configuration']);
+    Route::get('/demandes', [DemandeController::class, 'index']);
+    Route::post('/demandes', [DemandeController::class, 'store']);
+    Route::get('/demandes/{id}', [DemandeController::class, 'show']);
+    Route::post('/demandes/{id}/documents', [DemandeController::class, 'uploadDocument']);
+    Route::delete('/demandes/{id}/documents/{documentId}', [DemandeController::class, 'supprimerDocument']);
+});
+
+// Espace admin/agent
+Route::prefix('v1/admin/demandes')->middleware(['auth:sanctum', 'role:super_admin,admin,agent'])->group(function () {
+    Route::get('/', [DemandeAdminController::class, 'index']);
+    Route::get('/{id}', [DemandeAdminController::class, 'show']);
+    Route::patch('/{id}/statut', [DemandeAdminController::class, 'changerStatut']);
+    Route::patch('/documents/{documentId}', [DemandeAdminController::class, 'verifierDocument']);
 });
