@@ -20,6 +20,9 @@ use App\Http\Controllers\ImageController;
 use App\Http\Controllers\API\RessortissantAuthController;
 use App\Http\Controllers\API\DemandeController;
 use App\Http\Controllers\API\DemandeAdminController;
+use App\Http\Controllers\API\RessortissantAdminController;
+use App\Http\Controllers\API\TarifController;
+use App\Http\Controllers\API\DocumentTypeRequisController;
 
 // ==================== ROUTES PUBLIQUES ====================
 
@@ -310,4 +313,21 @@ Route::prefix('v1/admin/demandes')->middleware(['auth:sanctum', 'role:super_admi
     Route::get('/{id}', [DemandeAdminController::class, 'show']);
     Route::patch('/{id}/statut', [DemandeAdminController::class, 'changerStatut']);
     Route::patch('/documents/{documentId}', [DemandeAdminController::class, 'verifierDocument']);
+});
+
+// Registre consulaire — consultation admin/agent (l'inscription reste en
+// self-service côté ressortissant, voir /v1/ressortissant/auth/inscrire).
+Route::prefix('v1/admin/ressortissants')->middleware(['auth:sanctum', 'role:super_admin,admin,agent'])->group(function () {
+    Route::get('/', [RessortissantAdminController::class, 'index']);
+    Route::get('/statistiques', [RessortissantAdminController::class, 'statistiques']);
+    Route::get('/export', [RessortissantAdminController::class, 'export']);
+    Route::get('/{id}', [RessortissantAdminController::class, 'show']);
+});
+
+// Grille tarifaire et pièces requises par type de demande — configuration
+// pure, réservée à admin/super_admin (un agent traite des dossiers, il ne
+// change pas les tarifs).
+Route::middleware(['auth:sanctum', 'role:super_admin,admin'])->prefix('v1/admin')->group(function () {
+    Route::apiResource('tarifs', TarifController::class)->only(['index', 'store', 'update', 'destroy']);
+    Route::apiResource('document-types-requis', DocumentTypeRequisController::class)->only(['index', 'store', 'update', 'destroy']);
 });
