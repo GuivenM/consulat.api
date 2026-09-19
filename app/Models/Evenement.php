@@ -2,18 +2,29 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToEntity;
 use Illuminate\Support\Facades\Storage;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * Sert la page Agenda. En V1, simple liste liée aux Actualités, sans
+ * inscription (le calendrier complet avec inscription est prévu en V2 —
+ * cf. document du projet). ->participants() et ->partenaires() du modèle
+ * AJDCB pointaient vers les tables participations/partenaires_evenements,
+ * supprimées avec le nettoyage des tables associatives ; ->galerie()
+ * pointait vers une classe EvenementMedia qui n'a jamais existé. Les trois
+ * sont retirées plutôt que laissées à planter au premier appel.
+ */
 class Evenement extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToEntity;
 
     protected $table = 'evenements';
 
     protected $fillable = [
+        'entity_id',
         'titre',
         'description',
         'contenu',
@@ -49,30 +60,6 @@ class Evenement extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime'
     ];
-
-    /**
-     * Relations
-     */
-    public function participants()
-    {
-        return $this->belongsToMany(Membre::class, 'participations')
-                    ->withPivot('statut', 'date_inscription', 'commentaire')
-                    ->withTimestamps();
-    }
-
-    public function partenaires()
-    {
-        return $this->belongsToMany(Partenaire::class, 'partenaires_evenements');
-    }
-
-    // ATTENTION : la classe App\Models\EvenementMedia n'existe pas dans ce
-    // projet. Cette relation lèvera une erreur "Class not found" si elle est
-    // appelée. Créez le modèle + la migration correspondante (galerie photos
-    // de l'événement) avant d'utiliser ->galerie(), ou retirez cette méthode.
-    public function galerie()
-    {
-        return $this->hasMany(EvenementMedia::class);
-    }
 
     /**
      * Scopes
@@ -142,11 +129,11 @@ class Evenement extends Model
     {
         $debut = $this->date_debut->format('d/m/Y');
         $fin = $this->date_fin->format('d/m/Y');
-        
+
         if ($debut === $fin) {
             return $debut . ' de ' . $this->heure_debut->format('H:i') . ' à ' . $this->heure_fin->format('H:i');
         }
-        
+
         return 'Du ' . $debut . ' au ' . $fin;
     }
 }

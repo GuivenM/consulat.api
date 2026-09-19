@@ -22,6 +22,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'membre' => \App\Http\Middleware\EnsureIsMembre::class,
         ]);
 
+        // Résout l'entité (consulat/ambassade) courante en tout début de
+        // requête, avant que le moindre modèle scopé par BelongsToEntity
+        // ne soit consulté — vitrine publique comme routes authentifiées.
+        $middleware->api(append: [
+            \App\Http\Middleware\SetCurrentEntity::class,
+        ]);
+
         // ATTENTION : ce projet est une API pure (aucune route web/vue de
         // login n'existe — voir routes/web.php). Par défaut, Laravel
         // enregistre automatiquement un resolver de redirection "invité" qui

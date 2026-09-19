@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Models\Paiement;
+use App\Observers\PaiementObserver;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -19,6 +21,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // demandes.paiement_statut est un miroir de paiements ; il n'est
+        // recalculé que par cet observer, jamais à la main dans un
+        // contrôleur (voir PaiementObserver).
+        Paiement::observe(PaiementObserver::class);
     }
 }

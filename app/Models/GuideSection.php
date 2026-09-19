@@ -2,18 +2,26 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToEntity;
 use Illuminate\Support\Facades\Storage;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * Mini-CMS en sections/sous-sections/documents, repris tel quel d'AJDCB et
+ * réutilisé pour la page Services consulaires (visa, légalisation, actes,
+ * pièces à fournir, tarifs, délais — en onglets) et, si besoin, la FAQ.
+ * Purement informatif : aucune démarche ne se dépose depuis ces pages.
+ */
 class GuideSection extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToEntity;
 
     protected $table = 'guide_sections';
 
     protected $fillable = [
+        'entity_id',
         'titre',
         'description',
         'categorie',

@@ -2,16 +2,24 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToEntity;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * Formulaire de contact de la page Contact. `objet` a été adapté au
+ * contexte consulaire : 'adhesion' (AJDCB) devient 'service_consulaire'
+ * (question sur une démarche — sans dépôt de dossier possible depuis ce
+ * canal, cf. le widget "Besoin d'aide ?" qui renvoie ici ou vers la FAQ).
+ */
 class Message extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToEntity;
 
     protected $table = 'messages';
 
     protected $fillable = [
+        'entity_id',
         'nom',
         'prenom',
         'email',
@@ -89,11 +97,9 @@ class Message extends Model
     {
         $objets = [
             'question' => 'Question',
+            'service_consulaire' => 'Question sur une démarche',
             'partenariat' => 'Demande de partenariat',
-            'adhesion' => 'Demande d\'adhésion',
             'urgence' => 'Urgence communautaire',
-            'information' => 'Demande d\'information',
-            'reclamation' => 'Réclamation',
             'autre' => 'Autre'
         ];
 

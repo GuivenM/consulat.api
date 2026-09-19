@@ -2,18 +2,29 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToEntity;
 use Illuminate\Support\Facades\Storage;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * Sert la page Congo–Bénin & Diplomatie économique (partenaires
+ * institutionnels, entreprises, secteurs porteurs).
+ *
+ * Les relations ->projets() et ->evenements() du modèle AJDCB pointaient
+ * vers une classe Projet inexistante et une table partenaires_evenements
+ * supprimée avec le nettoyage des tables associatives : retirées plutôt
+ * que laissées à planter au premier appel.
+ */
 class Partenaire extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToEntity;
 
     protected $table = 'partenaires';
 
     protected $fillable = [
+        'entity_id',
         'nom',
         'description',
         'logo',
@@ -43,18 +54,9 @@ class Partenaire extends Model
     /**
      * Relations
      */
-    // ATTENTION : la classe App\Models\Projet et la table pivot
-    // 'partenaires_projets' n'existent pas dans ce projet. Cette relation
-    // lèvera une erreur si elle est appelée. Créez le module "Projets" avant
-    // d'utiliser ->projets(), ou retirez cette méthode.
-    public function projets()
+    public function messages()
     {
-        return $this->belongsToMany(Projet::class, 'partenaires_projets');
-    }
-
-    public function evenements()
-    {
-        return $this->belongsToMany(Evenement::class, 'partenaires_evenements');
+        return $this->hasMany(Message::class);
     }
 
     /**

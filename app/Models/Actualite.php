@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToEntity;
 use Illuminate\Support\Facades\Storage;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -10,25 +11,35 @@ use Illuminate\Support\Str;
 
 class Actualite extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToEntity;
 
     protected $table = 'actualites';
 
     protected $fillable = [
+        'entity_id',
         'titre',
-        'slug',           // ← AJOUTER CE CHAMP
+        'slug',
         'description',
         'contenu',
         'image',
         'type',
+        'categorie',
+        'date_publicacion',
         'date_evenement',
         'lieu_evenement',
         'auteur',
+        'source',
+        'vues',
+        'tags',
+        'est_a_la_une',
         'statut',
         'facebook_post_url',
     ];
 
     protected $casts = [
+        'tags' => 'array',
+        'est_a_la_une' => 'boolean',
+        'date_publicacion' => 'datetime',
         'date_evenement' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime'
@@ -66,16 +77,21 @@ class Actualite extends Model
         return $query->where('type', $type);
     }
 
+    public function scopeALaUne($query)
+    {
+        return $query->where('est_a_la_une', true);
+    }
+
     public function scopeRecents($query, $limit = 5)
     {
         return $query->publie()->orderBy('created_at', 'desc')->limit($limit);
     }
 
     /**
-     * Galerie multi-photos (nouveau). Le champ `image` legacy reste rempli
-     * pour les actualités créées avant cette fonctionnalité — `image_url`
-     * bascule automatiquement sur la 1ère photo de la galerie dès qu'il y
-     * en a une, sans casser l'affichage des anciennes actualités.
+     * Galerie multi-photos. Le champ `image` legacy reste rempli pour les
+     * actualités créées avant cette fonctionnalité — `image_url` bascule
+     * automatiquement sur la 1ère photo de la galerie dès qu'il y en a
+     * une, sans casser l'affichage des anciennes actualités.
      */
     public function photos()
     {
@@ -112,7 +128,7 @@ class Actualite extends Model
     public function getLienPublicAttribute()
     {
         $base = rtrim(env('FRONTEND_URL', 'http://localhost:5173'), '/');
-        return "{$base}/news/{$this->id}";
+        return "{$base}/actualites/{$this->slug}";
     }
 
     public function getDateAttribute()

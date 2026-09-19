@@ -9,11 +9,20 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
+/**
+ * Compte admin/agent. `entity_id` est nullable : un super_admin (celui qui
+ * crée les entités et leurs comptes admin/agent) n'appartient à aucune
+ * entité en particulier ; un admin ou un agent, lui, est toujours
+ * rattaché à une. Pas de BelongsToEntity ici volontairement — un
+ * super_admin doit pouvoir lister les users de toutes les entités, un
+ * scope global gênerait plus qu'il n'aiderait pour ce seul modèle.
+ */
 class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
+        'entity_id',
         'nom',
         'prenom',
         'email',
@@ -24,7 +33,6 @@ class User extends Authenticatable
         'est_actif',
         'email_verified_at',
         'derniere_connexion',
-        'membre_id',
         'activation_token',
         'activation_token_expire_at',
     ];
@@ -46,8 +54,14 @@ class User extends Authenticatable
 
     protected $appends = ['nom_complet', 'photo_url', 'initiales', 'role_label', 'en_attente_activation'];
 
+    public const ROLES = [
+        'super_admin' => 'Super Administrateur',
+        'admin' => 'Administrateur',
+        'agent' => 'Agent',
+    ];
+
     /**
-     * Accesseurs - NE LES DECLAREZ QU'UNE SEULE FOIS
+     * Accesseurs
      */
     public function getNomCompletAttribute()
     {
@@ -66,14 +80,7 @@ class User extends Authenticatable
 
     public function getRoleLabelAttribute()
     {
-        $roles = [
-            'super_admin' => 'Super Administrateur',
-            'admin' => 'Administrateur',
-            'moderateur' => 'Modérateur',
-            'tresorier' => 'Trésorier',
-        ];
-
-        return $roles[$this->role] ?? $this->role;
+        return self::ROLES[$this->role] ?? $this->role;
     }
 
     public function getEnAttenteActivationAttribute()
@@ -94,16 +101,21 @@ class User extends Authenticatable
         return in_array($this->role, ['super_admin', 'admin']);
     }
 
-    public function isModerateur()
+    public function isAgent()
     {
-        return in_array($this->role, ['super_admin', 'admin', 'moderateur']);
+        return in_array($this->role, ['super_admin', 'admin', 'agent']);
     }
 
     /**
      * Relations
      */
-    public function membre()
+    public function entity()
     {
-        return $this->belongsTo(Membre::class);
+        return $this->belongsTo(Entity::class);
+    }
+
+    public function demandesTraitees()
+    {
+        return $this->hasMany(Demande::class, 'traite_par');
     }
 }
