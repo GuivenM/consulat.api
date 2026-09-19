@@ -83,6 +83,43 @@ class RessortissantAdminController extends Controller
     }
 
     /**
+     * Carte interactive — vue admin (tableau de bord interne) : agrégation
+     * par quartier ET points individuels géolocalisés, contrairement à la
+     * vue publique (voir CartePubliqueController) qui s'arrête à la ville
+     * et n'expose aucune donnée personnelle.
+     */
+    public function carte()
+    {
+        $parQuartier = Ressortissant::whereNotNull('quartier')
+            ->selectRaw('ville, quartier, count(*) as total')
+            ->groupBy('ville', 'quartier')
+            ->orderBy('ville')
+            ->orderByDesc('total')
+            ->get();
+
+        $points = Ressortissant::whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->get(['id', 'nom', 'prenom', 'ville', 'quartier', 'statut', 'latitude', 'longitude'])
+            ->map(fn (Ressortissant $r) => [
+                'id' => $r->id,
+                'nom_complet' => $r->nom_complet,
+                'ville' => $r->ville,
+                'quartier' => $r->quartier,
+                'statut' => $r->statut,
+                'latitude' => $r->latitude,
+                'longitude' => $r->longitude,
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'par_quartier' => $parQuartier,
+                'points' => $points,
+            ],
+        ]);
+    }
+
+    /**
      * Chiffres clés pour le tableau de bord admin. Le détail par ville sert
      * aussi de socle pour la future carte interactive (agrégation par ville
      * côté vitrine publique).

@@ -14,6 +14,7 @@ use App\Http\Controllers\API\PartenaireController;
 use App\Http\Controllers\API\PaiementController;
 use App\Http\Controllers\API\NewsletterController;
 use App\Http\Controllers\API\StatistiquesPubliquesController;
+use App\Http\Controllers\API\CartePubliqueController;
 use App\Http\Controllers\API\UtilisateurController;
 use App\Http\Controllers\API\JournalActiviteController;
 use App\Http\Controllers\ImageController;
@@ -96,6 +97,9 @@ Route::prefix('v1')->group(function () {
 
     // Statistiques publiques - Chiffres clés réels pour la page d'accueil
     Route::get('/statistiques-publiques', [StatistiquesPubliquesController::class, 'index']);
+
+    // Carte interactive - Vue publique (agrégation par ville uniquement)
+    Route::get('/carte', [CartePubliqueController::class, 'index']);
 
     // Paiements FedaPay - Route publique (un visiteur ou un membre paie sans être connecté)
     Route::post('/paiements/evenements/{id}', [PaiementController::class, 'initierEvenement']);
@@ -320,6 +324,7 @@ Route::prefix('v1/admin/demandes')->middleware(['auth:sanctum', 'role:super_admi
 Route::prefix('v1/admin/ressortissants')->middleware(['auth:sanctum', 'role:super_admin,admin,agent'])->group(function () {
     Route::get('/', [RessortissantAdminController::class, 'index']);
     Route::get('/statistiques', [RessortissantAdminController::class, 'statistiques']);
+    Route::get('/carte', [RessortissantAdminController::class, 'carte']);
     Route::get('/export', [RessortissantAdminController::class, 'export']);
     Route::get('/{id}', [RessortissantAdminController::class, 'show']);
 });
