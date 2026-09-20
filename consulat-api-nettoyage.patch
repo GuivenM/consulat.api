@@ -1,265 +1,115 @@
-diff --git a/app/Console/Commands/VerifierRetardsCotisations.php b/app/Console/Commands/VerifierRetardsCotisations.php
+diff --git a/app/Http/Controllers/API/ActionController.php b/app/Http/Controllers/API/ActionController.php
 deleted file mode 100644
-index 81263fd..0000000
---- a/app/Console/Commands/VerifierRetardsCotisations.php
+index f466573..0000000
+--- a/app/Http/Controllers/API/ActionController.php
 +++ /dev/null
-@@ -1,94 +0,0 @@
--<?php
--
--namespace App\Console\Commands;
--
--use App\Mail\CotisationRappel;
--use App\Mail\MembreRadieAutomatiquement;
--use App\Models\Membre;
--use App\Models\User;
--use Illuminate\Console\Command;
--use Illuminate\Support\Facades\Mail;
--
--class VerifierRetardsCotisations extends Command
--{
--    /**
--     * php artisan cotisations:verifier-retards
--     * Prévu pour tourner une fois par mois, après la date limite de paiement
--     * (Article 2 : cotisation due au plus tard le 10 de chaque mois) — voir
--     * routes/console.php pour la planification.
--     */
--    protected $signature = 'cotisations:verifier-retards';
--
--    protected $description = "Envoie rappels/avertissements de cotisation et radie automatiquement les membres à 3 mois consécutifs d'impayé (Règlement intérieur, Article 3)";
--
--    public function handle(): int
--    {
--        $membres = Membre::actif()->get();
--
--        $nbRappels = 0;
--        $nbAvertissements = 0;
--        $nbRadiations = 0;
--
--        foreach ($membres as $membre) {
--            if (!$membre->email) {
--                continue;
--            }
--
--            $retard = $membre->retardCotisationConsecutif();
--
--            if ($retard >= 3) {
--                $membre->update([
--                    'statut' => 'inactif',
--                    'motif_inactivation' => "Radiation automatique : {$retard} mois consécutifs de cotisation impayée "
--                        . "(Règlement intérieur, Article 3), le " . now()->format('d/m/Y'),
--                ]);
--
--                \App\Models\JournalActivite::enregistrer(
--                    'membre.radiation_auto',
--                    "Radiation automatique : {$membre->nom_complet} ({$retard} mois consécutifs impayés)",
--                    $membre
--                );
--
--                $this->envoyerSansBloquer(fn () => Mail::to($membre->email)
--                    ->send(new MembreRadieAutomatiquement($membre, $retard)));
--
--                $destinatairesBureau = User::whereIn('role', ['super_admin', 'tresorier'])
--                    ->where('est_actif', true)
--                    ->pluck('email');
--                foreach ($destinatairesBureau as $emailBureau) {
--                    $this->envoyerSansBloquer(fn () => Mail::to($emailBureau)
--                        ->send(new MembreRadieAutomatiquement($membre, $retard, pourBureau: true)));
--                }
--
--                $nbRadiations++;
--                $this->line("Radié : {$membre->nom_complet} ({$retard} mois)");
--            } elseif ($retard === 2) {
--                $this->envoyerSansBloquer(fn () => Mail::to($membre->email)
--                    ->send(new CotisationRappel($membre, $retard, avertissementFinal: true)));
--                $nbAvertissements++;
--            } elseif ($retard === 1) {
--                $this->envoyerSansBloquer(fn () => Mail::to($membre->email)
--                    ->send(new CotisationRappel($membre, $retard)));
--                $nbRappels++;
--            }
--        }
--
--        $this->info("Terminé : {$nbRappels} rappel(s), {$nbAvertissements} avertissement(s), {$nbRadiations} radiation(s).");
--
--        return self::SUCCESS;
--    }
--
--    /**
--     * Un email qui échoue (mauvaise config SMTP, etc.) ne doit jamais faire
--     * planter le reste de la commande — la radiation elle-même a déjà eu
--     * lieu, on ne fait que journaliser l'échec d'envoi.
--     */
--    private function envoyerSansBloquer(callable $envoi): void
--    {
--        try {
--            $envoi();
--        } catch (\Exception $e) {
--            \Log::error('cotisations:verifier-retards — échec envoi email : ' . $e->getMessage());
--        }
--    }
--}
-diff --git a/app/Http/Controllers/API/AdhesionController.php b/app/Http/Controllers/API/AdhesionController.php
-deleted file mode 100644
-index 4396872..0000000
---- a/app/Http/Controllers/API/AdhesionController.php
-+++ /dev/null
-@@ -1,510 +0,0 @@
+@@ -1,264 +0,0 @@
 -<?php
 -
 -namespace App\Http\Controllers\API;
 -
 -use App\Http\Controllers\Controller;
--use App\Models\Adhesion;
--use App\Models\Membre;
--use App\Mail\ConfirmationAdhesion;
--use App\Mail\NotificationTraitementAdhesion;
--use App\Mail\NotificationNouvelleAdhesion;
--use App\Mail\ActivationCompteMembre;
+-use App\Models\Action;
 -use Illuminate\Http\Request;
 -use Illuminate\Support\Facades\Validator;
--use Illuminate\Support\Facades\Mail;
--use Illuminate\Support\Str;
+-use Illuminate\Support\Facades\Storage;
+-use App\Services\ImageCompressionService;
 -
--class AdhesionController extends Controller
+-class ActionController extends Controller
 -{
 -    /**
--     * Afficher toutes les demandes d'adhésion
+-     * Afficher toutes les actions
 -     */
--    public function index()
+-    public function index(Request $request)
 -    {
 -        try {
--            $adhesions = Adhesion::orderBy('created_at', 'desc')->get();
--
+-            $query = Action::query();
+-            
+-            // Filtre par section
+-            if ($request->has('section')) {
+-                $query->where('section', $request->section);
+-            }
+-            
+-            // Filtre par statut
+-            if ($request->has('statut')) {
+-                $query->where('statut', $request->statut);
+-            }
+-            
+-            $actions = $query->orderBy('created_at', 'desc')->get();
+-            
 -            return response()->json([
 -                'success' => true,
--                'data' => $adhesions,
--                'message' => 'Demandes d\'adhésion récupérées avec succès'
--            ], 200);
--
+-                'data' => $actions
+-            ]);
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors de la récupération des demandes',
--                'error' => $e->getMessage()
+-                'message' => 'Erreur lors de la récupération des actions'
 -            ], 500);
 -        }
 -    }
 -
 -    /**
--     * Afficher une demande spécifique
+-     * Afficher les actions par section
+-     */
+-    public function getBySection($section)
+-    {
+-        try {
+-            $actions = Action::where('section', $section)
+-                ->orderBy('created_at', 'desc')
+-                ->get();
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $actions
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la récupération des actions'
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Afficher une action spécifique
 -     */
 -    public function show($id)
 -    {
 -        try {
--            $adhesion = Adhesion::findOrFail($id);
--
+-            $action = Action::findOrFail($id);
+-            
 -            return response()->json([
 -                'success' => true,
--                'data' => $adhesion,
--                'message' => 'Demande récupérée avec succès'
--            ], 200);
--
+-                'data' => $action
+-            ]);
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Demande non trouvée'
+-                'message' => 'Action non trouvée'
 -            ], 404);
 -        }
 -    }
 -
 -    /**
--     * Créer une nouvelle demande d'adhésion.
--     *
--     * Reflète le formulaire complet (ex Google Form) : nationalité et pièces,
--     * état civil, statut professionnel avec branches étudiant/entrepreneur,
--     * compétences/centres d'intérêt/langues, engagement associatif, et la
--     * déclaration sur l'honneur. 4 uploads de fichiers (photo, carte
--     * consulaire, CIPR, lettre au Président).
+-     * Créer une nouvelle action
 -     */
--    public function store(Request $request)
+-    public function store(Request $request, ImageCompressionService $compressor)
 -    {
 -        try {
 -            $validator = Validator::make($request->all(), [
--                // --- Nationalité & pièces ---
--                'est_congolais' => 'required|boolean',
--                'nationalite' => 'nullable|string|max:255',
--                'possede_carte_consulaire' => 'nullable|boolean',
--                'duree_au_benin' => 'required|string|max:100',
--                'possede_cipr' => 'nullable|boolean',
--
--                // --- Identité & état civil ---
--                'nom' => 'required|string|max:255',
--                'prenom' => 'required|string|max:255',
--                'nom_marital' => 'nullable|string|max:255',
--                'sexe' => 'required|in:masculin,feminin',
--                'date_naissance' => 'required|date|before:today',
--                'lieu_naissance' => 'required|string|max:255',
--                'adresse' => 'required|string',
--                'ville' => 'required|in:' . implode(',', Membre::VILLES_BENIN),
--                'situation_matrimoniale' => 'required|in:marie,divorce,union_libre,celibataire,veuf',
--                'nombre_enfants_charge' => 'required|integer|min:0',
--
--                // --- Pièces jointes ---
--                'photo' => 'required|image|mimes:jpeg,png,jpg|max:10240',
--                'carte_consulaire_fichier' => 'nullable|required_if:possede_carte_consulaire,1|file|mimes:jpeg,png,jpg,pdf|max:10240',
--                'cipr_fichier' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:10240',
--
--                // --- Statut professionnel ---
--                'profession' => 'required|in:etudiant,employe,entrepreneur,commercant,sans_emploi,autre',
--                'profession_autre' => 'nullable|required_if:profession,autre|string|max:255',
--                'niveau_etude' => 'required|string|max:255',
--                'niveau_etude_autre' => 'nullable|string|max:255',
--                'dernier_diplome' => 'required|string|max:255',
--                'dernier_diplome_autre' => 'nullable|string|max:255',
--
--                // --- Branche Entrepreneur (si profession = entrepreneur) ---
--                'entrepreneur_domaine' => 'nullable|required_if:profession,entrepreneur|string|max:255',
--                'entrepreneur_domaine_autre' => 'nullable|string|max:255',
--                'entrepreneur_duree' => 'nullable|required_if:profession,entrepreneur|string|max:100',
--                'entrepreneur_nom_entreprise' => 'nullable|required_if:profession,entrepreneur|string|max:255',
--                'entrepreneur_fonction' => 'nullable|string|max:255',
--
--                // --- Branche Étudiant (si profession = etudiant) ---
--                'etablissement' => 'nullable|required_if:profession,etudiant|string|max:255',
--                'etudiant_filiere' => 'nullable|required_if:profession,etudiant|string|max:255',
--                'etudiant_annee' => 'nullable|required_if:profession,etudiant|string|max:50',
--
--                // --- Compétences, centres d'intérêt, loisirs, langues ---
--                'competences' => 'required|array|min:1',
--                'competences.*' => 'string|max:255',
--                'competences_autre' => 'nullable|string|max:255',
--                'centres_interet' => 'nullable|array',
--                'centres_interet.*' => 'string|max:255',
--                'domaines_interet_autre' => 'nullable|string|max:255',
--                'loisirs' => 'required|array|min:1',
--                'loisirs.*' => 'string|max:255',
--                'loisirs_autre' => 'nullable|string|max:255',
--                'disponibilite' => 'required|string|max:255',
--                'langues' => 'nullable|array',
--                'langues.*' => 'string|max:255',
--
--                // --- Engagement associatif ---
--                'comment_connu' => 'required|string|max:255',
--                'comment_connu_autre' => 'nullable|string|max:255',
--                'recommande_par' => 'nullable|string|max:255',
--                'motivation' => 'nullable|string',
--                'experience_associative' => 'required|boolean',
--                'experience_associative_details' => 'nullable|required_if:experience_associative,1|string',
--                'commissions_souhaitees' => 'nullable|array',
--                'commissions_souhaitees.*' => 'string|max:255',
--                'attentes' => 'nullable|string',
--
--                // --- Coordonnées ---
--                'email' => 'required|email|unique:adhesions,email',
--                'telephone' => 'required|string|max:20',
--                'autre_telephone' => 'nullable|string|max:20',
--
--                // --- Déclaration sur l'honneur ---
--                'declarant_nom_complet' => 'required|string|max:255',
--                'accepte_conditions' => 'required|accepted',
--                'souhaite_recevoir_actualites' => 'required|boolean',
--                'lettre_demande_fichiers' => 'nullable|array|max:5',
--                'lettre_demande_fichiers.*' => 'file|mimes:jpeg,png,jpg,pdf,doc,docx|max:20480',
+-                'titre' => 'required|string|max:255',
+-                'description' => 'required|string',
+-                'section' => 'required|in:solidarite,education,culture,communication',
+-                'image' => 'nullable|image|mimes:jpeg,png,jpg|max:20480',
+-                'date_debut' => 'nullable|date',
+-                'date_fin' => 'nullable|date|after_or_equal:date_debut',
+-                'date_evenement' => 'nullable|date',
+-                'lieu' => 'nullable|string|max:255',
+-                'objectifs' => 'nullable|array',
+-                'activites_cles' => 'nullable|array',
+-                'resultats' => 'nullable|array',
+-                'statut' => 'sometimes|in:actif,inactif,a_venir,termine'
 -            ]);
 -
 -            if ($validator->fails()) {
@@ -269,93 +119,56 @@ index 4396872..0000000
 -                ], 422);
 -            }
 -
--            // IMPORTANT : on part UNIQUEMENT des champs validés (jamais $request->all()).
--            // 'statut', 'date_traitement' et 'traite_par' ne sont pas dans les règles
--            // ci-dessus et ne peuvent donc jamais être fixés par un appelant public —
--            // sinon n'importe qui pourrait auto-approuver sa propre demande.
--            $data = $validator->validated();
+-            $data = $request->except('image');
 -
--            // Nationalité : déduite de la case "êtes-vous congolais(e)" si non précisée.
--            $data['nationalite'] = $data['est_congolais']
--                ? 'Congolaise'
--                : ($data['nationalite'] ?? 'Non précisée');
--
--            // Photo (obligatoire, utilisée pour le badge)
--            $data['photo'] = str_replace('public/', '', $request->file('photo')->store('adhesions/photos', 'public'));
--
--            // Carte consulaire (si le candidat déclare en posséder une)
--            if ($request->hasFile('carte_consulaire_fichier')) {
--                $data['carte_consulaire_fichier'] = str_replace(
--                    'public/', '', $request->file('carte_consulaire_fichier')->store('adhesions/documents', 'public')
--                );
--            } else {
--                unset($data['carte_consulaire_fichier']);
+-            // Gérer l'upload de l'image
+-            if ($request->hasFile('image')) {
+-                $data['image'] = $compressor->store($request->file('image'), 'actions');
 -            }
 -
--            // CIPR (optionnel)
--            if ($request->hasFile('cipr_fichier')) {
--                $data['cipr_fichier'] = str_replace(
--                    'public/', '', $request->file('cipr_fichier')->store('adhesions/documents', 'public')
--                );
--            } else {
--                unset($data['cipr_fichier']);
--            }
+-            // Les champs objectifs / activites_cles / resultats sont castés en
+-            // 'array' sur le modèle Action : Eloquent se charge de l'encodage
+-            // JSON automatiquement, inutile (et incorrect) de le faire ici.
 -
--            // Lettre de demande au Président (jusqu'à 5 fichiers)
--            if ($request->hasFile('lettre_demande_fichiers')) {
--                $data['lettre_demande_fichiers'] = collect($request->file('lettre_demande_fichiers'))
--                    ->map(fn($file) => str_replace('public/', '', $file->store('adhesions/lettres', 'public')))
--                    ->values()
--                    ->all();
--            } else {
--                unset($data['lettre_demande_fichiers']);
--            }
 -
--            $adhesion = Adhesion::create($data);
--
--            // Envoyer email de confirmation au candidat
--            try {
--                Mail::to($adhesion->email)->send(new ConfirmationAdhesion($adhesion));
--            } catch (\Exception $e) {
--                \Log::error('Erreur envoi email confirmation candidat: ' . $e->getMessage());
--            }
--
--            // Envoyer notification à l'admin
--            try {
--                $adminEmail = config('mail.admin_address');
--                if (!$adminEmail) {
--                    $adminEmail = 'contact@ajdcb.org';
--                }
--                Mail::to($adminEmail)->send(new NotificationNouvelleAdhesion($adhesion));
--            } catch (\Exception $e) {
--                \Log::error('Erreur envoi email notification admin: ' . $e->getMessage());
--            }
+-            $action = Action::create($data);
 -
 -            return response()->json([
 -                'success' => true,
--                'message' => 'Demande d\'adhésion soumise avec succès. Un email de confirmation vous a été envoyé.',
--                'data' => $adhesion,
--                'redirect_url' => config('app.frontend_url') . '/admin/adhesions/' . $adhesion->id
+-                'message' => 'Action créée avec succès',
+-                'data' => $action
 -            ], 201);
 -
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors de la soumission de la demande',
+-                'message' => 'Erreur lors de la création',
 -                'error' => $e->getMessage()
 -            ], 500);
 -        }
 -    }
 -
 -    /**
--     * Traiter une demande d'adhésion (approuver/rejeter)
+-     * Mettre à jour une action
 -     */
--    public function traiter(Request $request, $id)
+-    public function update(Request $request, $id, ImageCompressionService $compressor)
 -    {
 -        try {
+-            $action = Action::findOrFail($id);
+-
 -            $validator = Validator::make($request->all(), [
--                'statut' => 'required|in:approuvee,rejetee',
--                'commentaire' => 'nullable|string'
+-                'titre' => 'sometimes|string|max:255',
+-                'description' => 'sometimes|string',
+-                'section' => 'sometimes|in:solidarite,education,culture,communication',
+-                'image' => 'nullable|image|mimes:jpeg,png,jpg|max:20480',
+-                'date_debut' => 'nullable|date',
+-                'date_fin' => 'nullable|date|after_or_equal:date_debut',
+-                'date_evenement' => 'nullable|date',
+-                'lieu' => 'nullable|string|max:255',
+-                'objectifs' => 'nullable|array',
+-                'activites_cles' => 'nullable|array',
+-                'resultats' => 'nullable|array',
+-                'statut' => 'sometimes|in:actif,inactif,a_venir,termine'
 -            ]);
 -
 -            if ($validator->fails()) {
@@ -365,372 +178,199 @@ index 4396872..0000000
 -                ], 422);
 -            }
 -
--            $adhesion = Adhesion::findOrFail($id);
+-            $data = $request->except('image');
 -
--            $adhesion->update([
--                'statut' => $request->statut,
--                'commentaire_traitement' => $request->commentaire,
--                'date_traitement' => now(),
--                'traite_par' => auth()->id(),
--            ]);
--
--            \App\Models\JournalActivite::enregistrer(
--                'adhesion.traiter',
--                "Demande d'adhésion de {$adhesion->prenom} {$adhesion->nom} : " . ($request->statut === 'approuvee' ? 'approuvée' : 'rejetée'),
--                $adhesion
--            );
--
--            if ($request->statut === 'approuvee') {
--                // Le membre existe dès l'approbation, mais reste "en_attente_paiement"
--                // tant que la cotisation initiale (1000F, cf. PaiementController) n'est
--                // pas réglée. firstOrCreate évite un doublon si traiter() est rappelé.
--                // Il peut néanmoins se connecter à son espace membre dès maintenant
--                // (voir MembreAuthController) — un bandeau l'invite juste à régler
--                // sa cotisation initiale.
--                $membre = Membre::firstOrCreate(
--                    ['adhesion_id' => $adhesion->id],
--                    [
--                        'nom' => $adhesion->nom,
--                        'prenom' => $adhesion->prenom,
--                        'photo' => $adhesion->photo,
--                        'whatsapp' => $adhesion->telephone,
--                        'ville' => $adhesion->ville,
--                        'statut' => 'en_attente_paiement',
--                        'email' => $adhesion->email,
--                    ]
--                );
--
--                // Compte membre pas encore activé (pas de mot de passe) : on
--                // (re)génère un lien d'activation à chaque approbation.
--                if (!$membre->password) {
--                    $membre->update([
--                        'email' => $membre->email ?: $adhesion->email,
--                        'activation_token' => Str::random(64),
--                        'activation_token_expire_at' => now()->addDays(7),
--                    ]);
--
--                    try {
--                        Mail::to($membre->email)->send(new ActivationCompteMembre($membre));
--                    } catch (\Exception $e) {
--                        \Log::error('Erreur envoi email activation membre: ' . $e->getMessage());
--                    }
+-            // Gérer la nouvelle image
+-            if ($request->hasFile('image')) {
+-                // Supprimer l'ancienne image
+-                if ($action->image) {
+-                    Storage::delete('public/' . $action->image);
 -                }
+-                
+-                $data['image'] = $compressor->store($request->file('image'), 'actions');
 -            }
 -
--            // Envoyer email de notification
--            try {
--                Mail::to($adhesion->email)->send(new NotificationTraitementAdhesion($adhesion));
--            } catch (\Exception $e) {
--                \Log::error('Erreur envoi email traitement: ' . $e->getMessage());
--            }
--
--            $message = $request->statut === 'approuvee'
--                ? 'Demande approuvée avec succès. Un email a été envoyé au candidat.'
--                : 'Demande rejetée avec succès. Un email a été envoyé au candidat.';
+-            $action->update($data);
 -
 -            return response()->json([
 -                'success' => true,
--                'message' => $message,
--                'data' => $adhesion,
--                'redirect_url' => config('app.frontend_url') . '/admin/adhesions/' . $adhesion->id
--            ], 200);
+-                'message' => 'Action mise à jour avec succès',
+-                'data' => $action
+-            ]);
 -
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors du traitement de la demande',
+-                'message' => 'Erreur lors de la mise à jour',
 -                'error' => $e->getMessage()
 -            ], 500);
 -        }
 -    }
 -
 -    /**
--     * Rejeter une demande d'adhésion
+-     * Supprimer une action
 -     */
--    public function rejeter(Request $request, $id)
+-    public function destroy($id)
 -    {
 -        try {
--            $validator = Validator::make($request->all(), [
--                'motif' => 'required|string'
--            ]);
--
--            if ($validator->fails()) {
--                return response()->json([
--                    'success' => false,
--                    'errors' => $validator->errors()
--                ], 422);
+-            $action = Action::findOrFail($id);
+-            
+-            // Supprimer l'image
+-            if ($action->image) {
+-                Storage::delete('public/' . $action->image);
 -            }
--
--            $adhesion = Adhesion::findOrFail($id);
--
--            if ($adhesion->statut !== 'en_attente') {
--                return response()->json([
--                    'success' => false,
--                    'message' => 'Cette demande a déjà été traitée'
--                ], 400);
--            }
--
--            $adhesion->update([
--                'statut' => 'rejetee',
--                'commentaire_traitement' => $request->motif,
--                'date_traitement' => now(),
--                'traite_par' => auth()->id(),
--            ]);
--
--            try {
--                Mail::to($adhesion->email)->send(new NotificationTraitementAdhesion($adhesion));
--            } catch (\Exception $e) {
--                \Log::error('Erreur envoi email: ' . $e->getMessage());
--            }
+-            
+-            $action->delete();
 -
 -            return response()->json([
 -                'success' => true,
--                'message' => 'Demande rejetée avec succès',
--                'data' => $adhesion,
--                'redirect_url' => config('app.frontend_url') . '/admin/adhesions/' . $adhesion->id
--            ], 200);
+-                'message' => 'Action supprimée avec succès'
+-            ]);
 -
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors du rejet',
--                'error' => $e->getMessage()
+-                'message' => 'Erreur lors de la suppression'
 -            ], 500);
 -        }
 -    }
 -
 -    /**
--     * Statistiques des demandes d'adhésion
+-     * Statistiques des actions
 -     */
 -    public function statistiques()
 -    {
 -        try {
 -            $stats = [
--                'total' => Adhesion::count(),
--                'en_attente' => Adhesion::where('statut', 'en_attente')->count(),
--                'approuvees' => Adhesion::where('statut', 'approuvee')->count(),
--                'rejetees' => Adhesion::where('statut', 'rejetee')->count(),
--                'par_ville' => Adhesion::selectRaw('ville, count(*) as total')
--                    ->groupBy('ville')
--                    ->orderByDesc('total')
--                    ->limit(10)
+-                'total' => Action::count(),
+-                'par_section' => Action::selectRaw('section, count(*) as total')
+-                    ->groupBy('section')
 -                    ->get(),
+-                'par_statut' => Action::selectRaw('statut, count(*) as total')
+-                    ->groupBy('statut')
+-                    ->get(),
+-                'prochaines_actions' => Action::where('statut', 'a_venir')
+-                    ->orWhere('date_debut', '>', now())
+-                    ->orderBy('date_debut')
+-                    ->limit(5)
+-                    ->get(['id', 'titre', 'date_debut', 'section'])
 -            ];
 -
 -            return response()->json([
 -                'success' => true,
 -                'data' => $stats
--            ], 200);
--
--        } catch (\Exception $e) {
--            return response()->json([
--                'success' => false,
--                'message' => 'Erreur lors du calcul des statistiques',
--                'error' => $e->getMessage()
--            ], 500);
--        }
--    }
--
--    /**
--     * Supprimer une demande d'adhésion
--     */
--    public function destroy($id)
--    {
--        try {
--            $adhesion = Adhesion::findOrFail($id);
--            $nom = "{$adhesion->prenom} {$adhesion->nom}";
--            $adhesion->delete();
--
--            \App\Models\JournalActivite::enregistrer(
--                'adhesion.supprimer',
--                "Demande d'adhésion supprimée : {$nom}"
--            );
--
--            return response()->json([
--                'success' => true,
--                'message' => 'Demande supprimée avec succès'
--            ], 200);
--
--        } catch (\Exception $e) {
--            return response()->json([
--                'success' => false,
--                'message' => 'Erreur lors de la suppression de la demande',
--                'error' => $e->getMessage()
--            ], 500);
--        }
--    }
--
--    /**
--     * Exporter les demandes en CSV
--     */
--    public function exporter(Request $request)
--    {
--        try {
--            $query = Adhesion::query();
--
--            if ($request->has('statut') && $request->statut !== 'tous') {
--                $query->where('statut', $request->statut);
--            }
--
--            $adhesions = $query->orderBy('created_at', 'desc')->get();
--
--            $filename = "adhesions_ajdcb_" . now()->format('Y-m-d') . ".csv";
--            $handle = fopen('php://temp', 'w');
--
--            fputcsv($handle, [
--                'ID', 'Nom', 'Prénom', 'Email', 'Téléphone',
--                'Ville', 'Profession', 'Statut', 'Date soumission', 'Date traitement'
 -            ]);
--
--            foreach ($adhesions as $adhesion) {
--                fputcsv($handle, [
--                    $adhesion->id,
--                    $adhesion->nom,
--                    $adhesion->prenom,
--                    $adhesion->email,
--                    $adhesion->telephone,
--                    $adhesion->ville,
--                    $adhesion->profession,
--                    $adhesion->statut,
--                    $adhesion->created_at->format('d/m/Y H:i'),
--                    $adhesion->date_traitement ? $adhesion->date_traitement->format('d/m/Y H:i') : ''
--                ]);
--            }
--
--            rewind($handle);
--            $content = stream_get_contents($handle);
--            fclose($handle);
--
--            return response($content)
--                ->header('Content-Type', 'text/csv')
--                ->header('Content-Disposition', 'attachment; filename="' . $filename . '"');
--
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors de l\'export',
--                'error' => $e->getMessage()
+-                'message' => 'Erreur lors du calcul des statistiques'
 -            ], 500);
 -        }
 -    }
 -}
-diff --git a/app/Http/Controllers/API/CotisationController.php b/app/Http/Controllers/API/CotisationController.php
+\ No newline at end of file
+diff --git a/app/Http/Controllers/API/EvenementController.php b/app/Http/Controllers/API/EvenementController.php
 deleted file mode 100644
-index d674873..0000000
---- a/app/Http/Controllers/API/CotisationController.php
+index 93b22ed..0000000
+--- a/app/Http/Controllers/API/EvenementController.php
 +++ /dev/null
-@@ -1,401 +0,0 @@
+@@ -1,248 +0,0 @@
 -<?php
 -
 -namespace App\Http\Controllers\API;
 -
 -use App\Http\Controllers\Controller;
--use App\Models\Cotisation;
--use App\Models\Membre;
+-use App\Models\Evenement;
 -use Illuminate\Http\Request;
--use Illuminate\Support\Facades\Artisan;
--use Illuminate\Support\Facades\Auth;
 -use Illuminate\Support\Facades\Validator;
+-use Illuminate\Support\Facades\Storage;
+-use App\Services\ImageCompressionService;
 -
--class CotisationController extends Controller
+-class EvenementController extends Controller
 -{
 -    /**
--     * Montant mensuel fixé par le règlement intérieur (Article 2).
--     */
--    const MONTANT_DEFAUT = 1000;
--
--    /**
--     * Liste des cotisations d'un mois pour tous les membres actifs
--     * (checklist « à jour / impayé » — combine les membres actifs et
--     * les cotisations existantes, même quand aucune ligne n'existe encore).
--     *
--     * GET /v1/cotisations?mois=2026-08
+-     * Afficher tous les événements
 -     */
 -    public function index(Request $request)
 -    {
 -        try {
--            $mois = $request->query('mois', now()->format('Y-m'));
+-            $query = Evenement::query();
 -
--            if (!preg_match('/^\d{4}-\d{2}$/', $mois)) {
--                return response()->json([
--                    'success' => false,
--                    'message' => 'Format de mois invalide, attendu AAAA-MM'
--                ], 422);
+-            if ($request->has('statut')) {
+-                $query->where('statut', $request->statut);
 -            }
 -
--            $membres = Membre::actif()
--                ->when(request('ville'), fn($q, $ville) => $q->where('ville', $ville))
--                ->orderBy('nom')
--                ->get();
--            $cotisations = Cotisation::where('mois', $mois)
--                ->get()
--                ->keyBy('membre_id');
+-            if ($request->has('type')) {
+-                $query->where('type', $request->type);
+-            }
 -
--            $result = $membres->map(function ($membre) use ($cotisations, $mois) {
--                // Un membre n'a rien à devoir pour un mois antérieur à son
--                // adhésion — même règle que dans historiqueMembre().
--                if ($membre->created_at->format('Y-m') > $mois) {
--                    return [
--                        'membre_id' => $membre->id,
--                        'nom_complet' => $membre->nom_complet,
--                        'photo_url' => $membre->photo_url,
--                        'ville' => $membre->ville,
--                        'mois' => $mois,
--                        'cotisation_id' => null,
--                        'montant' => null,
--                        'statut' => 'anterieure_adhesion',
--                        'date_paiement' => null,
--                        'mode_paiement' => null,
--                        'commentaire' => null,
--                    ];
--                }
+-            if ($request->boolean('a_venir')) {
+-                $query->aVenir();
+-            }
 -
--                $cotisation = $cotisations->get($membre->id);
--                return [
--                    'membre_id' => $membre->id,
--                    'nom_complet' => $membre->nom_complet,
--                    'photo_url' => $membre->photo_url,
--                    'ville' => $membre->ville,
--                    'mois' => $mois,
--                    'cotisation_id' => $cotisation->id ?? null,
--                    'montant' => $cotisation->montant ?? self::MONTANT_DEFAUT,
--                    'statut' => $cotisation->statut ?? 'impayee',
--                    'date_paiement' => $cotisation->date_paiement ?? null,
--                    'mode_paiement' => $cotisation->mode_paiement ?? null,
--                    'commentaire' => $cotisation->commentaire ?? null,
--                ];
--            });
+-            $evenements = $query->orderBy('date_debut', 'desc')->get();
 -
 -            return response()->json([
 -                'success' => true,
--                'data' => $result
+-                'data' => $evenements
 -            ]);
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors de la récupération des cotisations',
--                'error' => $e->getMessage()
+-                'message' => 'Erreur lors de la récupération des événements'
 -            ], 500);
 -        }
 -    }
 -
 -    /**
--     * Marquer une cotisation payée ou impayée pour un membre / un mois donné.
--     * Crée la ligne si elle n'existe pas encore (upsert).
--     *
--     * POST /v1/cotisations/marquer
+-     * Afficher un événement spécifique
 -     */
--    public function marquer(Request $request)
+-    public function show($id)
+-    {
+-        try {
+-            $evenement = Evenement::findOrFail($id);
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $evenement
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Événement non trouvé'
+-            ], 404);
+-        }
+-    }
+-
+-    /**
+-     * Créer un nouvel événement
+-     */
+-    public function store(Request $request, ImageCompressionService $compressor)
 -    {
 -        try {
 -            $validator = Validator::make($request->all(), [
--                'membre_id' => 'required|exists:membres,id',
--                'mois' => 'required|regex:/^\d{4}-\d{2}$/',
--                'statut' => 'required|in:payee,impayee',
--                'montant' => 'nullable|numeric|min:0',
--                'date_paiement' => 'nullable|date',
--                'mode_paiement' => 'nullable|in:especes,mobile_money,virement,autre',
--                'commentaire' => 'nullable|string|max:500',
+-                'titre' => 'required|string|max:255',
+-                'description' => 'nullable|string',
+-                'contenu' => 'nullable|string',
+-                'image' => 'nullable|image|mimes:jpeg,png,jpg|max:20480',
+-                'date_debut' => 'required|date',
+-                'date_fin' => 'required|date|after_or_equal:date_debut',
+-                'heure_debut' => 'nullable|date_format:H:i',
+-                'heure_fin' => 'nullable|date_format:H:i',
+-                'lieu' => 'nullable|string|max:255',
+-                'adresse' => 'nullable|string|max:255',
+-                'ville' => 'nullable|string|max:255',
+-                'type' => 'nullable|string|max:100',
+-                'categorie' => 'nullable|string|max:100',
+-                'capacite_max' => 'nullable|integer|min:0',
+-                'prix' => 'nullable|numeric|min:0',
+-                'devise' => 'nullable|string|max:10',
+-                'lien_billet' => 'nullable|url',
+-                'organisateur' => 'nullable|string|max:255',
+-                'contact_organisateur' => 'nullable|string|max:255',
+-                'email_contact' => 'nullable|email',
+-                'telephone_contact' => 'nullable|string|max:30',
+-                'statut' => 'sometimes|in:publie,brouillon,annule',
 -            ]);
 -
 -            if ($validator->fails()) {
@@ -740,250 +380,711 @@ index d674873..0000000
 -                ], 422);
 -            }
 -
--            $data = [
--                'montant' => $request->input('montant', self::MONTANT_DEFAUT),
--                'statut' => $request->statut,
--                'commentaire' => $request->commentaire,
--                'enregistre_par' => Auth::id(),
--            ];
+-            $data = $validator->validated();
 -
--            if ($request->statut === 'payee') {
--                $data['date_paiement'] = $request->input('date_paiement', now()->toDateString());
--                $data['mode_paiement'] = $request->input('mode_paiement', 'especes');
--            } else {
--                $data['date_paiement'] = null;
--                $data['mode_paiement'] = null;
+-            if ($request->hasFile('image')) {
+-                $data['image'] = $compressor->store($request->file('image'), 'evenements');
 -            }
 -
--            $cotisation = Cotisation::updateOrCreate(
--                ['membre_id' => $request->membre_id, 'mois' => $request->mois],
--                $data
--            );
--
--            $membreLabel = optional(Membre::find($request->membre_id))->nom_complet ?? "#{$request->membre_id}";
--            \App\Models\JournalActivite::enregistrer(
--                'cotisation.marquer',
--                "Cotisation de {$membreLabel} pour {$request->mois} marquée " . ($request->statut === 'payee' ? 'payée' : 'impayée'),
--                $cotisation
--            );
--
--            // Même règle que côté FedaPay (PaiementController) : un premier
--            // paiement confirmé, manuel ou en ligne, active le membre.
--            if ($request->statut === 'payee') {
--                Membre::where('id', $request->membre_id)
--                    ->where('statut', 'en_attente_paiement')
--                    ->update(['statut' => 'actif']);
--            }
+-            $evenement = Evenement::create($data);
 -
 -            return response()->json([
 -                'success' => true,
--                'message' => $request->statut === 'payee' ? 'Cotisation marquée payée' : 'Cotisation marquée impayée',
--                'data' => $cotisation
--            ]);
+-                'message' => 'Événement créé avec succès',
+-                'data' => $evenement
+-            ], 201);
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors de l\'enregistrement de la cotisation',
+-                'message' => 'Erreur lors de la création',
 -                'error' => $e->getMessage()
 -            ], 500);
 -        }
 -    }
 -
 -    /**
--     * Statistiques d'un mois : taux à jour, montant collecté, membres en retard.
--     *
--     * GET /v1/cotisations/statistiques?mois=2026-08
+-     * Mettre à jour un événement
 -     */
--    public function statistiques(Request $request)
+-    public function update(Request $request, $id, ImageCompressionService $compressor)
 -    {
 -        try {
--            $mois = $request->query('mois', now()->format('Y-m'));
--            $finMois = \Carbon\Carbon::createFromFormat('Y-m', $mois)->endOfMonth();
+-            $evenement = Evenement::findOrFail($id);
 -
--            $nbMembres = Membre::actif()->where('created_at', '<=', $finMois)->count();
--            $cotisationsMois = Cotisation::where('mois', $mois)->get();
--            $nbPayees = $cotisationsMois->where('statut', 'payee')->count();
--            $montantCollecte = $cotisationsMois->where('statut', 'payee')->sum('montant');
--            $montantAttendu = $nbMembres * self::MONTANT_DEFAUT;
+-            $validator = Validator::make($request->all(), [
+-                'titre' => 'sometimes|string|max:255',
+-                'description' => 'nullable|string',
+-                'contenu' => 'nullable|string',
+-                'image' => 'nullable|image|mimes:jpeg,png,jpg|max:20480',
+-                'date_debut' => 'sometimes|date',
+-                'date_fin' => 'sometimes|date|after_or_equal:date_debut',
+-                'heure_debut' => 'nullable|date_format:H:i',
+-                'heure_fin' => 'nullable|date_format:H:i',
+-                'lieu' => 'nullable|string|max:255',
+-                'adresse' => 'nullable|string|max:255',
+-                'ville' => 'nullable|string|max:255',
+-                'type' => 'nullable|string|max:100',
+-                'categorie' => 'nullable|string|max:100',
+-                'capacite_max' => 'nullable|integer|min:0',
+-                'prix' => 'nullable|numeric|min:0',
+-                'devise' => 'nullable|string|max:10',
+-                'lien_billet' => 'nullable|url',
+-                'organisateur' => 'nullable|string|max:255',
+-                'contact_organisateur' => 'nullable|string|max:255',
+-                'email_contact' => 'nullable|email',
+-                'telephone_contact' => 'nullable|string|max:30',
+-                'statut' => 'sometimes|in:publie,brouillon,annule',
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $data = $validator->validated();
+-
+-            if ($request->hasFile('image')) {
+-                if ($evenement->image) {
+-                    Storage::delete('public/' . $evenement->image);
+-                }
+-                $data['image'] = $compressor->store($request->file('image'), 'evenements');
+-            }
+-
+-            $evenement->update($data);
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Événement mis à jour avec succès',
+-                'data' => $evenement
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la mise à jour',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Supprimer un événement
+-     */
+-    public function destroy($id)
+-    {
+-        try {
+-            $evenement = Evenement::findOrFail($id);
+-
+-            if ($evenement->image) {
+-                Storage::delete('public/' . $evenement->image);
+-            }
+-
+-            $evenement->delete();
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Événement supprimé avec succès'
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la suppression'
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Statistiques des événements
+-     */
+-    public function statistiques()
+-    {
+-        try {
+-            $stats = [
+-                'total' => Evenement::count(),
+-                'par_statut' => Evenement::selectRaw('statut, count(*) as total')
+-                    ->groupBy('statut')
+-                    ->get(),
+-                'a_venir' => Evenement::aVenir()->count(),
+-                'prochains_evenements' => Evenement::aVenir()
+-                    ->orderBy('date_debut')
+-                    ->limit(5)
+-                    ->get(['id', 'titre', 'date_debut', 'lieu']),
+-            ];
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $stats
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors du calcul des statistiques'
+-            ], 500);
+-        }
+-    }
+-}
+diff --git a/app/Http/Controllers/API/MembreAuthController.php b/app/Http/Controllers/API/MembreAuthController.php
+deleted file mode 100644
+index 1a683ef..0000000
+--- a/app/Http/Controllers/API/MembreAuthController.php
++++ /dev/null
+@@ -1,303 +0,0 @@
+-<?php
+-
+-namespace App\Http\Controllers\API;
+-
+-use App\Http\Controllers\Controller;
+-use App\Models\Membre;
+-use App\Mail\ActivationCompteMembre;
+-use Illuminate\Http\Request;
+-use Illuminate\Support\Facades\Hash;
+-use Illuminate\Support\Facades\Mail;
+-use Illuminate\Support\Facades\Validator;
+-use Illuminate\Support\Str;
+-
+-class MembreAuthController extends Controller
+-{
+-    /**
+-     * Activation du compte : le membre définit son mot de passe via le
+-     * token reçu par email lors de la création de son accès.
+-     */
+-    public function activerCompte(Request $request)
+-    {
+-        try {
+-            $validator = Validator::make($request->all(), [
+-                'token' => 'required|string',
+-                'password' => 'required|string|min:6|confirmed',
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $membre = Membre::where('activation_token', $request->token)->first();
+-
+-            if (!$membre) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Lien d\'activation invalide'
+-                ], 404);
+-            }
+-
+-            if (!$membre->activation_token_expire_at || $membre->activation_token_expire_at->isPast()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Ce lien d\'activation a expiré. Contactez l\'administration pour en recevoir un nouveau.'
+-                ], 410);
+-            }
+-
+-            $membre->update([
+-                'password' => Hash::make($request->password),
+-                'email_verified_at' => now(),
+-                'activation_token' => null,
+-                'activation_token_expire_at' => null,
+-            ]);
+-
+-            $token = $membre->createToken('membre_auth_token')->plainTextToken;
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Compte activé avec succès',
+-                'data' => [
+-                    'membre' => $this->formaterMembre($membre),
+-                    'token' => $token,
+-                ]
+-            ]);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de l\'activation du compte',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Connexion du membre. Un membre "en_attente_paiement" peut se
+-     * connecter normalement — le frontend affiche un bandeau l'invitant
+-     * à régler sa cotisation, mais l'accès à l'espace membre n'est pas
+-     * bloqué.
+-     */
+-    public function login(Request $request)
+-    {
+-        try {
+-            $validator = Validator::make($request->all(), [
+-                'email' => 'required|email',
+-                'password' => 'required|string|min:6',
+-                'remember' => 'boolean'
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $membre = Membre::where('email', $request->email)->first();
+-
+-            if (!$membre) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Aucun compte trouvé avec cet email'
+-                ], 401);
+-            }
+-
+-            if (!$membre->password) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Votre compte n\'est pas encore activé. Consultez l\'email reçu lors de votre adhésion.'
+-                ], 403);
+-            }
+-
+-            if ($membre->statut === 'inactif') {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Votre compte a été désactivé. Veuillez contacter l\'administration.'
+-                ], 403);
+-            }
+-
+-            if (!Hash::check($request->password, $membre->password)) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Mot de passe incorrect'
+-                ], 401);
+-            }
+-
+-            $membre->update(['derniere_connexion' => now()]);
+-
+-            $token = $membre->createToken(
+-                'membre_auth_token',
+-                ['*'],
+-                $request->remember ? now()->addDays(30) : now()->addDay()
+-            )->plainTextToken;
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Connexion réussie',
+-                'data' => [
+-                    'membre' => $this->formaterMembre($membre),
+-                    'token' => $token,
+-                ]
+-            ]);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la connexion',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Mot de passe oublié (espace membre) : envoie un lien de réinitialisation
+-     * si l'email correspond à un compte membre actif et déjà activé (sinon
+-     * c'est le lien d'activation initial qu'il faut utiliser). Réponse
+-     * volontairement identique dans tous les cas pour ne pas révéler quels
+-     * emails ont un compte.
+-     */
+-    public function motDePasseOublie(Request $request)
+-    {
+-        $validator = Validator::make($request->all(), [
+-            'email' => 'required|email',
+-        ]);
+-
+-        if ($validator->fails()) {
+-            return response()->json([
+-                'success' => false,
+-                'errors' => $validator->errors()
+-            ], 422);
+-        }
+-
+-        $reponse = [
+-            'success' => true,
+-            'message' => "Si un compte existe avec cet email, un lien de réinitialisation vient d'être envoyé.",
+-        ];
+-
+-        try {
+-            $membre = Membre::where('email', $request->email)
+-                ->where('statut', '!=', 'inactif')
+-                ->whereNotNull('password')
+-                ->first();
+-
+-            if ($membre) {
+-                $membre->update([
+-                    'activation_token' => Str::random(64),
+-                    'activation_token_expire_at' => now()->addDays(7),
+-                ]);
+-
+-                Mail::to($membre->email)->send(new ActivationCompteMembre($membre, reinitialisation: true));
+-            }
+-        } catch (\Exception $e) {
+-            \Log::error('Erreur envoi email réinitialisation membre: ' . $e->getMessage());
+-        }
+-
+-        return response()->json($reponse);
+-    }
+-
+-    public function logout(Request $request)
+-    {
+-        try {
+-            $request->user()->currentAccessToken()->delete();
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Déconnexion réussie'
+-            ]);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la déconnexion'
+-            ], 500);
+-        }
+-    }
+-
+-    public function me(Request $request)
+-    {
+-        try {
+-            $membre = $request->user();
 -
 -            return response()->json([
 -                'success' => true,
 -                'data' => [
--                    'mois' => $mois,
--                    'nb_membres' => $nbMembres,
--                    'nb_payees' => $nbPayees,
--                    'nb_impayees' => $nbMembres - $nbPayees,
--                    'taux_a_jour' => $nbMembres > 0 ? round($nbPayees / $nbMembres * 100) : 0,
--                    'montant_collecte' => $montantCollecte,
--                    'montant_attendu' => $montantAttendu,
+-                    'membre' => $this->formaterMembre($membre),
 -                ]
 -            ]);
+-
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors du calcul des statistiques',
--                'error' => $e->getMessage()
+-                'message' => 'Erreur lors de la récupération des informations'
+-            ], 500);
+-        }
+-    }
+-
+-    public function changePassword(Request $request)
+-    {
+-        try {
+-            $validator = Validator::make($request->all(), [
+-                'current_password' => 'required|string|min:6',
+-                'new_password' => 'required|string|min:6|confirmed',
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $membre = $request->user();
+-
+-            if (!Hash::check($request->current_password, $membre->password)) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Le mot de passe actuel est incorrect'
+-                ], 401);
+-            }
+-
+-            $membre->password = Hash::make($request->new_password);
+-            $membre->save();
+-
+-            $membre->tokens()->where('id', '!=', $membre->currentAccessToken()->id)->delete();
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Mot de passe modifié avec succès'
+-            ]);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors du changement de mot de passe'
 -            ], 500);
 -        }
 -    }
 -
 -    /**
--     * Export CSV des cotisations d'un mois (respecte le même filtre statut
--     * que la liste affichée côté admin : tous / a_jour / en_retard).
+-     * Champs exposés au frontend membre — volontairement plus restreint
+-     * que l'espace admin (pas de champs internes de gestion).
+-     */
+-    private function formaterMembre(Membre $membre): array
+-    {
+-        return [
+-            'id' => $membre->id,
+-            'nom' => $membre->nom,
+-            'prenom' => $membre->prenom,
+-            'nom_complet' => $membre->nom_complet,
+-            'email' => $membre->email,
+-            'photo' => $membre->photo_url,
+-            'poste' => $membre->poste,
+-            'commission' => $membre->commission,
+-            'role' => $membre->role,
+-            'statut' => $membre->statut,
+-            'en_attente_paiement' => $membre->statut === 'en_attente_paiement',
+-            'derniere_connexion' => $membre->derniere_connexion?->format('d/m/Y H:i'),
+-        ];
+-    }
+-}
+diff --git a/app/Http/Controllers/API/MembreController.php b/app/Http/Controllers/API/MembreController.php
+deleted file mode 100644
+index cf31aa0..0000000
+--- a/app/Http/Controllers/API/MembreController.php
++++ /dev/null
+@@ -1,515 +0,0 @@
+-<?php
+-
+-namespace App\Http\Controllers\API;
+-
+-use App\Http\Controllers\Controller;
+-use App\Models\Membre;
+-use App\Models\User;
+-use App\Mail\ActivationCompteAdmin;
+-use Illuminate\Http\Request;
+-use Illuminate\Support\Facades\Validator;
+-use Illuminate\Support\Facades\Storage;
+-use Illuminate\Support\Facades\Hash;
+-use Illuminate\Support\Facades\Mail;
+-use Illuminate\Support\Str;
+-use App\Services\ImageCompressionService;
+-
+-class MembreController extends Controller
+-{
+-    /**
+-     * Afficher tous les membres
+-     */
+-    public function index()
+-    {
+-        try {
+-            $membres = Membre::where('statut', 'actif')
+-                ->orderByRaw('CASE 
+-                    WHEN poste IS NOT NULL THEN 1 
+-                    WHEN commission IS NOT NULL THEN 2 
+-                    ELSE 3 
+-                END')
+-                ->orderBy('nom')
+-                ->get();
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $membres
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la récupération des membres'
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Afficher les membres du bureau exécutif
+-     */
+-    public function bureau()
+-    {
+-        try {
+-            $bureau = Membre::whereNotNull('poste')
+-                ->where('statut', 'actif')
+-                ->orderByRaw("FIELD(poste, 
+-                    'Président', 
+-                    'Vice-Président', 
+-                    'Secrétaire Général', 
+-                    'Secrétaire Général Adjoint',
+-                    'Trésorier Général', 
+-                    'Trésorier Général Adjoint',
+-                    'Chargé de Communication',
+-                    'Chargé des Projets')")
+-                ->get();
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $bureau
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la récupération du bureau'
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Afficher les membres d'une commission
+-     */
+-    public function commission($nom)
+-    {
+-        try {
+-            $membres = Membre::where('commission', $nom)
+-                ->where('statut', 'actif')
+-                ->get();
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $membres
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la récupération des membres'
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Afficher TOUS les membres, actifs et inactifs (réservé à l'espace admin).
+-     * La route publique /membres ne renvoie que les membres actifs.
+-     */
+-    public function tous()
+-    {
+-        try {
+-            $membres = Membre::with('compteAdmin')
+-                ->when(request('ville'), fn($q, $ville) => $q->where('ville', $ville))
+-                ->orderByRaw('CASE
+-                    WHEN poste IS NOT NULL THEN 1
+-                    WHEN commission IS NOT NULL THEN 2
+-                    ELSE 3
+-                END')
+-                ->orderBy('nom')
+-                ->get();
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $membres
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la récupération des membres'
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Export CSV de tous les membres (espace admin), filtrable par statut
+-     * pour rester cohérent avec les onglets affichés côté front.
 -     *
--     * GET /v1/cotisations/export?mois=2026-08&statut=tous
+-     * GET /v1/membres-admin/export?statut=tous|actif|en_attente_paiement|inactif
 -     */
 -    public function export(Request $request)
 -    {
--        $mois = $request->query('mois', now()->format('Y-m'));
--        $statutFiltre = $request->query('statut', 'tous'); // tous|a_jour|en_retard
+-        $statutFiltre = $request->query('statut', 'tous');
 -
--        if (!preg_match('/^\d{4}-\d{2}$/', $mois)) {
--            return response()->json([
--                'success' => false,
--                'message' => 'Format de mois invalide, attendu AAAA-MM'
--            ], 422);
+-        $query = Membre::orderByRaw('CASE
+-                WHEN poste IS NOT NULL THEN 1
+-                WHEN commission IS NOT NULL THEN 2
+-                ELSE 3
+-            END')
+-            ->orderBy('nom');
+-
+-        if (in_array($statutFiltre, ['actif', 'en_attente_paiement', 'inactif'])) {
+-            $query->where('statut', $statutFiltre);
 -        }
 -
--        $membres = Membre::actif()->orderBy('nom')->get();
--        $cotisations = Cotisation::where('mois', $mois)->get()->keyBy('membre_id');
+-        $membres = $query->get();
 -
--        $lignes = $membres->map(function ($membre) use ($cotisations, $mois) {
--            if ($membre->created_at->format('Y-m') > $mois) {
--                return [
--                    'nom_complet' => $membre->nom_complet,
--                    'statut' => 'anterieure_adhesion',
--                    'montant' => null,
--                    'date_paiement' => null,
--                    'mode_paiement' => null,
--                    'commentaire' => null,
--                ];
--            }
--
--            $c = $cotisations->get($membre->id);
--            return [
--                'nom_complet' => $membre->nom_complet,
--                'statut' => $c->statut ?? 'impayee',
--                'montant' => $c->montant ?? self::MONTANT_DEFAUT,
--                'date_paiement' => $c->date_paiement ?? null,
--                'mode_paiement' => $c->mode_paiement ?? null,
--                'commentaire' => $c->commentaire ?? null,
--            ];
--        });
--
--        if ($statutFiltre === 'a_jour') {
--            $lignes = $lignes->where('statut', 'payee');
--        } elseif ($statutFiltre === 'en_retard') {
--            $lignes = $lignes->where('statut', 'impayee');
--        }
--
--        $modeLabels = [
--            'especes' => 'Espèces',
--            'mobile_money' => 'Mobile Money',
--            'virement' => 'Virement',
--            'autre' => 'Autre',
--        ];
 -        $statutLabels = [
--            'payee' => 'À jour',
--            'impayee' => 'En retard',
--            'anterieure_adhesion' => 'Pas encore membre',
+-            'actif' => 'Actif',
+-            'en_attente_paiement' => 'En attente de paiement',
+-            'inactif' => 'Inactif',
 -        ];
 -
--        $filename = "cotisations_{$mois}.csv";
--
--        return response()->streamDownload(function () use ($lignes, $modeLabels, $statutLabels) {
+-        return response()->streamDownload(function () use ($membres, $statutLabels) {
 -            $handle = fopen('php://output', 'w');
--            // BOM UTF-8 pour qu'Excel affiche correctement les accents.
 -            fwrite($handle, "\xEF\xBB\xBF");
--            fputcsv($handle, ['Membre', 'Statut', 'Montant (FCFA)', 'Date de paiement', 'Mode de paiement', 'Commentaire'], ';');
+-            fputcsv($handle, ['Nom', 'Prénom', 'Poste', 'Commission', 'Statut', 'WhatsApp', 'Membre depuis'], ';');
 -
--            foreach ($lignes as $l) {
+-            foreach ($membres as $m) {
 -                fputcsv($handle, [
--                    $l['nom_complet'],
--                    $statutLabels[$l['statut']] ?? $l['statut'],
--                    $l['montant'] ?? '',
--                    $l['date_paiement'] ?? '',
--                    $l['mode_paiement'] ? ($modeLabels[$l['mode_paiement']] ?? $l['mode_paiement']) : '',
--                    $l['commentaire'] ?? '',
+-                    $m->nom,
+-                    $m->prenom,
+-                    $m->poste ?? '',
+-                    $m->commission ?? '',
+-                    $statutLabels[$m->statut] ?? $m->statut,
+-                    $m->whatsapp ?? '',
+-                    $m->created_at->format('d/m/Y'),
 -                ], ';');
 -            }
 -
 -            fclose($handle);
--        }, $filename, [
+-        }, 'membres.csv', [
 -            'Content-Type' => 'text/csv; charset=UTF-8',
 -        ]);
 -    }
 -
 -    /**
--     * Historique des cotisations du membre connecté — même logique que
--     * historiqueMembre(), mais l'id vient du token authentifié, jamais de
--     * l'URL, pour qu'un membre ne puisse jamais consulter les cotisations
--     * d'un autre membre.
--     *
--     * GET /v1/membre/mes-cotisations
+-     * Ajouter un nouveau membre
 -     */
--    public function mesCotisations(Request $request)
--    {
--        return $this->historiqueMembre($request->user()->id);
--    }
--
--    /**
--     * Historique des cotisations d'un membre (12 derniers mois) + alerte de
--     * radiation si 3 mois consécutifs impayés (Règlement intérieur, Article 3).
--     *
--     * GET /v1/cotisations/membre/{id}
--     */
--    public function historiqueMembre($id)
+-    public function store(Request $request, ImageCompressionService $compressor)
 -    {
 -        try {
--            $membre = Membre::findOrFail($id);
+-            $validator = Validator::make($request->all(), [
+-                'nom' => 'required|string|max:255',
+-                'prenom' => 'required|string|max:255',
+-                'photo' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
+-                'facebook' => 'nullable|url|max:255',
+-                'instagram' => 'nullable|url|max:255',
+-                'linkedin' => 'nullable|url|max:255',
+-                'twitter' => 'nullable|url|max:255',
+-                'whatsapp' => 'nullable|string|max:20',
+-                'ville' => 'nullable|in:' . implode(',', Membre::VILLES_BENIN),
+-                'poste' => 'nullable|string|max:255',
+-                'commission' => 'nullable|string|max:255'
+-            ]);
 -
--            $moisAdhesion = $membre->created_at->format('Y-m');
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
 -
--            $mois = collect(range(0, 11))
--                ->map(fn($i) => now()->subMonths($i)->format('Y-m'))
--                ->values();
+-            $data = $request->except('photo');
 -
--            $cotisations = Cotisation::where('membre_id', $id)
--                ->whereIn('mois', $mois)
--                ->get()
--                ->keyBy('mois');
+-            // Gérer l'upload de la photo (compressée + convertie en WebP)
+-            if ($request->hasFile('photo')) {
+-                $data['photo'] = $compressor->store($request->file('photo'), 'membres');
+-            }
 -
--            // Un mois antérieur à l'arrivée du membre n'est ni payé ni impayé :
--            // il n'était tout simplement pas encore membre, donc rien à devoir.
--            $historique = $mois->map(function ($m) use ($cotisations, $moisAdhesion) {
--                if ($m < $moisAdhesion) {
--                    return [
--                        'mois' => $m,
--                        'statut' => 'anterieure_adhesion',
--                        'date_paiement' => null,
--                        'montant' => null,
--                    ];
--                }
+-            $membre = Membre::create($data);
 -
--                $c = $cotisations->get($m);
--                return [
--                    'mois' => $m,
--                    'statut' => $c->statut ?? 'impayee',
--                    'date_paiement' => $c->date_paiement ?? null,
--                    'montant' => $c->montant ?? null,
--                ];
--            });
--
--            // Retard consécutif à partir du mois courant (Article 3 : radiation
--            // automatique après 3 mois consécutifs de non-paiement), voir
--            // Membre::retardCotisationConsecutif() — même logique que
--            // cotisations:verifier-retards, qui agit dessus automatiquement.
--            $retardConsecutif = $membre->retardCotisationConsecutif();
+-            \App\Models\JournalActivite::enregistrer(
+-                'membre.ajouter',
+-                "Membre ajouté : {$membre->nom_complet}",
+-                $membre
+-            );
 -
 -            return response()->json([
 -                'success' => true,
--                'data' => [
--                    'membre' => $membre,
--                    'historique' => $historique,
--                    'retard_consecutif' => $retardConsecutif,
--                    'alerte_radiation' => $retardConsecutif >= 3,
--                ]
+-                'message' => 'Membre ajouté avec succès',
+-                'data' => $membre
+-            ], 201);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de l\'ajout du membre',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Afficher un membre spécifique
+-     */
+-    public function show($id)
+-    {
+-        try {
+-            $membre = Membre::findOrFail($id);
+-            
+-            return response()->json([
+-                'success' => true,
+-                'data' => $membre
 -            ]);
 -        } catch (\Exception $e) {
 -            return response()->json([
@@ -994,95 +1095,510 @@ index d674873..0000000
 -    }
 -
 -    /**
--     * Déclenchement manuel de la vérification des retards (rappels,
--     * avertissements, radiation automatique — voir
--     * cotisations:verifier-retards). Tourne aussi automatiquement chaque
--     * mois via le planificateur (routes/console.php) ; ce bouton sert à
--     * tester ou à forcer une vérification immédiate.
--     *
--     * POST /v1/cotisations/verifier-retards
+-     * Mettre à jour un membre
 -     */
--    public function verifierRetards()
+-    public function update(Request $request, $id, ImageCompressionService $compressor)
 -    {
 -        try {
--            Artisan::call('cotisations:verifier-retards');
+-            $membre = Membre::findOrFail($id);
+-
+-            $validator = Validator::make($request->all(), [
+-                'nom' => 'sometimes|string|max:255',
+-                'prenom' => 'sometimes|string|max:255',
+-                'photo' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
+-                'facebook' => 'nullable|url|max:255',
+-                'instagram' => 'nullable|url|max:255',
+-                'linkedin' => 'nullable|url|max:255',
+-                'twitter' => 'nullable|url|max:255',
+-                'whatsapp' => 'nullable|string|max:20',
+-                'ville' => 'nullable|in:' . implode(',', Membre::VILLES_BENIN),
+-                'poste' => 'nullable|string|max:255',
+-                'commission' => 'nullable|string|max:255',
+-                'statut' => 'sometimes|in:actif,inactif'
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $data = $request->except('photo');
+-
+-            // Gérer la nouvelle photo
+-            if ($request->hasFile('photo')) {
+-                // Supprimer l'ancienne photo
+-                if ($membre->photo) {
+-                    Storage::delete('public/' . $membre->photo);
+-                }
+-                
+-                $data['photo'] = $compressor->store($request->file('photo'), 'membres');
+-            }
+-
+-            $membre->update($data);
+-
+-            $champsModifies = array_keys($data);
+-            $statutAChange = array_key_exists('statut', $data);
+-            \App\Models\JournalActivite::enregistrer(
+-                'membre.modifier',
+-                $statutAChange
+-                    ? "Membre modifié : {$membre->nom_complet} (statut -> {$data['statut']})"
+-                    : "Membre modifié : {$membre->nom_complet}",
+-                $membre,
+-                ['champs' => $champsModifies]
+-            );
 -
 -            return response()->json([
 -                'success' => true,
--                'message' => 'Vérification effectuée.',
--                'detail' => trim(Artisan::output()),
+-                'message' => 'Membre mis à jour avec succès',
+-                'data' => $membre
 -            ]);
+-
 -        } catch (\Exception $e) {
 -            return response()->json([
 -                'success' => false,
--                'message' => 'Erreur lors de la vérification des retards',
--                'error' => $e->getMessage(),
+-                'message' => 'Erreur lors de la mise à jour',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Supprimer un membre
+-     */
+-    public function destroy($id)
+-    {
+-        try {
+-            $membre = Membre::findOrFail($id);
+-
+-            // Supprimer la photo
+-            if ($membre->photo) {
+-                Storage::delete('public/' . $membre->photo);
+-            }
+-
+-            $nomComplet = $membre->nom_complet;
+-            $membreId = $membre->id;
+-            $membre->delete();
+-
+-            \App\Models\JournalActivite::enregistrer(
+-                'membre.supprimer',
+-                "Membre supprimé : {$nomComplet}",
+-                null,
+-                ['membre_id' => $membreId]
+-            );
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Membre supprimé avec succès'
+-            ]);
+-
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la suppression',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Liste des commissions disponibles
+-     */
+-    public function commissions()
+-    {
+-        $commissions = [
+-            'Solidarité et Intégration',
+-            'Éducation et Formation',
+-            'Culture et Identité',
+-            'Communication et Partenariats',
+-            'Projets et Développement',
+-            'Finances',
+-            'Organisation Événements'
+-        ];
+-
+-        return response()->json([
+-            'success' => true,
+-            'data' => $commissions
+-        ]);
+-    }
+-
+-    /**
+-     * Postes du bureau exécutif
+-     */
+-    public function postesBureau()
+-    {
+-        $postes = [
+-            'Président',
+-            'Vice-Président',
+-            'Secrétaire Général',
+-            'Secrétaire Général Adjoint',
+-            'Trésorier Général',
+-            'Trésorier Général Adjoint',
+-            'Chargé de Communication',
+-            'Chargé des Projets',
+-            'Chargé des Relations Extérieures',
+-            'Conseiller'
+-        ];
+-
+-        return response()->json([
+-            'success' => true,
+-            'data' => $postes
+-        ]);
+-    }
+-
+-    /**
+-     * Les 77 communes du Bénin, pour le select "Ville" du formulaire membre
+-     * (et le filtre de la page Membres).
+-     */
+-    public function villes()
+-    {
+-        return response()->json([
+-            'success' => true,
+-            'data' => Membre::VILLES_BENIN,
+-        ]);
+-    }
+-
+-    /**
+-     * Crée un accès admin pour un membre du bureau, à partir de son poste
+-     * (voir Membre::POSTES_ADMIN_ELIGIBLES pour la correspondance poste -> rôle).
+-     * Envoie un email d'activation ; le mot de passe est choisi par
+-     * l'intéressé via ce lien, jamais généré/transmis ici.
+-     */
+-    public function creerAccesAdmin($id)
+-    {
+-        try {
+-            $membre = Membre::with('compteAdmin')->find($id);
+-
+-            if (!$membre) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Membre introuvable'
+-                ], 404);
+-            }
+-
+-            if (!$membre->peut_avoir_acces_admin) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Ce poste ne permet pas de créer un accès administrateur'
+-                ], 422);
+-            }
+-
+-            if ($membre->compteAdmin) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Ce membre a déjà un accès administrateur'
+-                ], 422);
+-            }
+-
+-            if (!$membre->email) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Ce membre n\'a pas d\'adresse email renseignée'
+-                ], 422);
+-            }
+-
+-            if (User::where('email', $membre->email)->exists()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Un compte admin existe déjà avec cet email'
+-                ], 422);
+-            }
+-
+-            $role = Membre::POSTES_ADMIN_ELIGIBLES[$membre->poste];
+-
+-            $user = User::create([
+-                'membre_id' => $membre->id,
+-                'nom' => $membre->nom,
+-                'prenom' => $membre->prenom,
+-                'email' => $membre->email,
+-                'telephone' => $membre->whatsapp,
+-                'role' => $role,
+-                // Mot de passe temporaire inutilisable : personne ne le connaît,
+-                // le compte n'est utilisable qu'après activation via le lien reçu par email.
+-                'password' => Hash::make(Str::random(40)),
+-                'est_actif' => true,
+-                'activation_token' => Str::random(64),
+-                'activation_token_expire_at' => now()->addDays(7),
+-            ]);
+-
+-            try {
+-                Mail::to($user->email)->send(new ActivationCompteAdmin($user));
+-            } catch (\Exception $e) {
+-                \Log::error('Erreur envoi email activation admin: ' . $e->getMessage());
+-            }
+-
+-            \App\Models\JournalActivite::enregistrer(
+-                'membre.creer_acces_admin',
+-                "Accès admin créé pour {$membre->nom_complet} (rôle : {$user->role_label})",
+-                $user
+-            );
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Accès créé, email d\'activation envoyé à ' . $user->email,
+-                'data' => [
+-                    'id' => $user->id,
+-                    'email' => $user->email,
+-                    'role' => $user->role,
+-                    'role_label' => $user->role_label,
+-                ],
+-            ], 201);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la création de l\'accès administrateur',
+-                'error' => $e->getMessage()
 -            ], 500);
 -        }
 -    }
 -}
-diff --git a/app/Http/Controllers/API/MembreAuthController.php b/app/Http/Controllers/API/MembreAuthController.php
-index 10b1594..1a683ef 100644
---- a/app/Http/Controllers/API/MembreAuthController.php
-+++ b/app/Http/Controllers/API/MembreAuthController.php
-@@ -15,7 +15,7 @@ class MembreAuthController extends Controller
- {
-     /**
-      * Activation du compte : le membre définit son mot de passe via le
--     * token reçu par email (voir AdhesionController::traiter).
-+     * token reçu par email lors de la création de son accès.
-      */
-     public function activerCompte(Request $request)
-     {
-diff --git a/app/Http/Controllers/API/MembreController.php b/app/Http/Controllers/API/MembreController.php
-index 886e5ca..cf31aa0 100644
---- a/app/Http/Controllers/API/MembreController.php
-+++ b/app/Http/Controllers/API/MembreController.php
-@@ -409,7 +409,7 @@ public function postesBureau()
- 
-     /**
-      * Les 77 communes du Bénin, pour le select "Ville" du formulaire membre
--     * (et le filtre des pages Membres/Cotisations).
-+     * (et le filtre de la page Membres).
-      */
-     public function villes()
-     {
-diff --git a/app/Http/Controllers/API/PaiementController.php b/app/Http/Controllers/API/PaiementController.php
-index 41ecd88..536032e 100644
---- a/app/Http/Controllers/API/PaiementController.php
-+++ b/app/Http/Controllers/API/PaiementController.php
-@@ -3,7 +3,6 @@
- namespace App\Http\Controllers\API;
- 
- use App\Http\Controllers\Controller;
--use App\Models\Cotisation;
- use App\Models\Evenement;
- use App\Models\Paiement;
- use App\Services\FedaPayService;
-@@ -13,67 +12,6 @@
- 
- class PaiementController extends Controller
- {
+\ No newline at end of file
+diff --git a/app/Http/Controllers/API/MembreEspaceController.php b/app/Http/Controllers/API/MembreEspaceController.php
+deleted file mode 100644
+index 4162f1d..0000000
+--- a/app/Http/Controllers/API/MembreEspaceController.php
++++ /dev/null
+@@ -1,194 +0,0 @@
+-<?php
+-
+-namespace App\Http\Controllers\API;
+-
+-use App\Http\Controllers\Controller;
+-use App\Models\Evenement;
+-use App\Services\ImageCompressionService;
+-use Illuminate\Http\Request;
+-use Illuminate\Support\Facades\Storage;
+-use Illuminate\Support\Facades\Validator;
+-
+-// Endpoints self-service de l'espace membre : contrairement à
+-// MembreController (admin, gère tous les membres), tout ici agit
+-// exclusivement sur $request->user() — un membre ne peut jamais lire ou
+-// modifier la fiche d'un autre membre via ces routes.
+-class MembreEspaceController extends Controller
+-{
 -    /**
--     * Initie un paiement FedaPay pour la cotisation mensuelle (Article 2 : 1000 FCFA).
--     * Le membre_id est optionnel : à défaut, le paiement est enregistré avec les
--     * coordonnées saisies et un admin le rapproche manuellement du bon membre.
+-     * Mise à jour du profil du membre connecté. Volontairement restreint
+-     * aux champs "personnels" : poste/commission/statut restent gérés par
+-     * l'admin (voir MembreController::update côté espace admin).
 -     *
--     * POST /v1/paiements/cotisation
+-     * PUT /v1/membre/profil
 -     */
--    public function initierCotisation(Request $request, FedaPayService $fedapay)
+-    public function updateProfil(Request $request, ImageCompressionService $compressor)
 -    {
--        // Rétro-compat : on accepte encore un `mois` unique (string), en plus
--        // du nouveau `mois` en tableau pour payer plusieurs mois d'un coup.
--        $moisInput = $request->input('mois');
--        if (is_string($moisInput)) {
--            $request->merge(['mois' => [$moisInput]]);
+-        try {
+-            $membre = $request->user();
+-
+-            $validator = Validator::make($request->all(), [
+-                'whatsapp' => 'nullable|string|max:30',
+-                'facebook' => 'nullable|string|max:255',
+-                'instagram' => 'nullable|string|max:255',
+-                'linkedin' => 'nullable|string|max:255',
+-                'twitter' => 'nullable|string|max:255',
+-                'photo' => 'nullable|image|mimes:jpeg,png,jpg|max:20480',
+-            ]);
+-
+-            if ($validator->fails()) {
+-                return response()->json([
+-                    'success' => false,
+-                    'errors' => $validator->errors()
+-                ], 422);
+-            }
+-
+-            $data = $validator->validated();
+-
+-            if ($request->hasFile('photo')) {
+-                if ($membre->photo) {
+-                    Storage::disk('public')->delete($membre->photo);
+-                }
+-                $data['photo'] = $compressor->store($request->file('photo'), 'membres');
+-            }
+-
+-            $membre->update($data);
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Profil mis à jour',
+-                'data' => $membre->fresh()
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la mise à jour du profil',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Événements à venir, avec le statut d'inscription du membre connecté
+-     * sur chacun ('inscrit' | 'confirme' | null si pas encore inscrit).
+-     *
+-     * GET /v1/membre/evenements
+-     */
+-    public function evenements(Request $request)
+-    {
+-        try {
+-            $membre = $request->user();
+-
+-            $evenements = Evenement::aVenir()
+-                ->orderBy('date_debut')
+-                ->get()
+-                ->map(function ($evenement) use ($membre) {
+-                    $participation = $evenement->participants
+-                        ->firstWhere('id', $membre->id);
+-
+-                    $array = $evenement->toArray();
+-                    $array['mon_inscription'] = $participation
+-                        ? $participation->pivot->statut
+-                        : null;
+-
+-                    return $array;
+-                });
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => $evenements
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de la récupération des événements',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Inscription à un événement gratuit. Les événements payants passent
+-     * par PaiementController::initierEvenement — la place n'est confirmée
+-     * qu'après paiement réussi (webhook FedaPay), pas ici.
+-     *
+-     * POST /v1/membre/evenements/{id}/inscription
+-     */
+-    public function inscrire(Request $request, $id)
+-    {
+-        try {
+-            $membre = $request->user();
+-            $evenement = Evenement::findOrFail($id);
+-
+-            if ($evenement->prix > 0) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Cet événement est payant : passez par le paiement pour réserver votre place.'
+-                ], 422);
+-            }
+-
+-            if ($evenement->est_complet && !$evenement->participants->contains($membre->id)) {
+-                return response()->json([
+-                    'success' => false,
+-                    'message' => 'Cet événement affiche complet.'
+-                ], 422);
+-            }
+-
+-            $dejaInscrit = $evenement->participants->contains($membre->id);
+-
+-            $evenement->participants()->syncWithoutDetaching([
+-                $membre->id => [
+-                    'statut' => 'inscrit',
+-                    'date_inscription' => now(),
+-                ]
+-            ]);
+-
+-            if (!$dejaInscrit) {
+-                $evenement->increment('nombre_inscrits');
+-            }
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Inscription confirmée'
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de l\'inscription',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-
+-    /**
+-     * Annulation d'une inscription à un événement gratuit.
+-     *
+-     * DELETE /v1/membre/evenements/{id}/inscription
+-     */
+-    public function desinscrire(Request $request, $id)
+-    {
+-        try {
+-            $membre = $request->user();
+-            $evenement = Evenement::findOrFail($id);
+-
+-            $etaitInscrit = $evenement->participants->contains($membre->id);
+-
+-            $evenement->participants()->detach($membre->id);
+-
+-            if ($etaitInscrit && $evenement->nombre_inscrits > 0) {
+-                $evenement->decrement('nombre_inscrits');
+-            }
+-
+-            return response()->json([
+-                'success' => true,
+-                'message' => 'Inscription annulée'
+-            ]);
+-        } catch (\Exception $e) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Erreur lors de l\'annulation',
+-                'error' => $e->getMessage()
+-            ], 500);
+-        }
+-    }
+-}
+diff --git a/app/Http/Controllers/API/PaiementController.php b/app/Http/Controllers/API/PaiementController.php
+deleted file mode 100644
+index 536032e..0000000
+--- a/app/Http/Controllers/API/PaiementController.php
++++ /dev/null
+@@ -1,189 +0,0 @@
+-<?php
+-
+-namespace App\Http\Controllers\API;
+-
+-use App\Http\Controllers\Controller;
+-use App\Models\Evenement;
+-use App\Models\Paiement;
+-use App\Services\FedaPayService;
+-use Illuminate\Http\Request;
+-use Illuminate\Support\Facades\Log;
+-use Illuminate\Support\Facades\Validator;
+-
+-class PaiementController extends Controller
+-{
+-    /**
+-     * Initie un paiement FedaPay pour un billet d'événement payant.
+-     *
+-     * POST /v1/paiements/evenements/{id}
+-     */
+-    public function initierEvenement(Request $request, $id, FedaPayService $fedapay)
+-    {
+-        $evenement = Evenement::findOrFail($id);
+-
+-        if (!$evenement->prix || $evenement->prix <= 0) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Cet événement est gratuit, aucun paiement requis.'
+-            ], 422);
+-        }
+-
+-        if ($evenement->est_complet) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Cet événement affiche complet.'
+-            ], 422);
 -        }
 -
 -        $validator = Validator::make($request->all(), [
 -            'membre_id' => 'nullable|exists:membres,id',
--            'mois' => 'required|array|min:1|max:12',
--            'mois.*' => 'regex:/^\d{4}-\d{2}$/',
 -            'nom_payeur' => 'nullable|string|max:255',
 -            'telephone_payeur' => 'nullable|string|max:30',
 -            'email_payeur' => 'nullable|email|max:255',
@@ -1094,116 +1610,276 @@ index 41ecd88..536032e 100644
 -
 -        $data = $validator->validated();
 -        $membre = !empty($data['membre_id']) ? \App\Models\Membre::find($data['membre_id']) : null;
--        // Un membre identifié (lien ou compte connecté) n'a rien à ressaisir :
--        // on complète avec sa fiche, et pour le reste FedaPay demande le
--        // numéro directement sur sa page de paiement (Mobile Money).
 -        $nomPayeur = $data['nom_payeur'] ?? $membre?->nom_complet;
 -        $telephonePayeur = $data['telephone_payeur'] ?? $membre?->whatsapp;
 -        $emailPayeur = $data['email_payeur'] ?? $membre?->email;
 -
--        $moisListe = array_values(array_unique($data['mois']));
--        $montant = CotisationController::MONTANT_DEFAUT * count($moisListe);
--
 -        $paiement = Paiement::create([
--            'type' => 'cotisation',
+-            'type' => 'evenement',
 -            'membre_id' => $data['membre_id'] ?? null,
--            'mois' => $moisListe[0],
--            'mois_liste' => $moisListe,
+-            'evenement_id' => $evenement->id,
 -            'nom_payeur' => $nomPayeur,
 -            'telephone_payeur' => $telephonePayeur,
 -            'email_payeur' => $emailPayeur,
--            'montant' => $montant,
--            'devise' => 'XOF',
+-            'montant' => $evenement->prix,
+-            'devise' => $evenement->devise ?: 'XOF',
 -            'statut' => 'en_attente',
 -        ]);
 -
--        $description = count($moisListe) > 1
--            ? 'Cotisation AJDCB - ' . count($moisListe) . ' mois (' . implode(', ', $moisListe) . ')'
--            : "Cotisation AJDCB - {$moisListe[0]}";
--
--        return $this->demarrerTransaction($fedapay, $paiement, $description, $nomPayeur, $telephonePayeur, $emailPayeur);
+-        return $this->demarrerTransaction($fedapay, $paiement, "Billet - {$evenement->titre}", $nomPayeur, $telephonePayeur, $emailPayeur);
 -    }
 -
-     /**
-      * Initie un paiement FedaPay pour un billet d'événement payant.
-      *
-@@ -244,29 +182,6 @@ public function webhook(Request $request, FedaPayService $fedapay)
-      */
-     private function appliquerPaiementReussi(Paiement $paiement): void
-     {
--        if ($paiement->type === 'cotisation' && $paiement->membre_id) {
--            $moisListe = $paiement->mois_liste ?: [$paiement->mois];
--            $montantParMois = count($moisListe) > 0 ? $paiement->montant / count($moisListe) : $paiement->montant;
+-    private function demarrerTransaction(
+-        FedaPayService $fedapay,
+-        Paiement $paiement,
+-        string $description,
+-        ?string $nomPayeur,
+-        ?string $telephonePayeur,
+-        ?string $emailPayeur
+-    ) {
+-        try {
+-            [$prenom, $nom] = $this->splitNom($nomPayeur);
 -
--            foreach ($moisListe as $mois) {
--                Cotisation::updateOrCreate(
--                    ['membre_id' => $paiement->membre_id, 'mois' => $mois],
--                    [
--                        'montant' => $montantParMois,
--                        'statut' => 'payee',
--                        'date_paiement' => now()->toDateString(),
--                        'mode_paiement' => 'mobile_money',
--                        'commentaire' => 'Payé en ligne via FedaPay (paiement #' . $paiement->id . ')',
--                    ]
--                );
--            }
+-            $customer = array_filter([
+-                'firstname' => $prenom,
+-                'lastname' => $nom,
+-                'email' => $emailPayeur,
+-                'phone_number' => $telephonePayeur ? [
+-                    'number' => $telephonePayeur,
+-                    'country' => 'bj',
+-                ] : null,
+-            ]);
 -
--            // Premier paiement réussi d'un membre encore en attente : il devient actif.
--            \App\Models\Membre::where('id', $paiement->membre_id)
--                ->where('statut', 'en_attente_paiement')
--                ->update(['statut' => 'actif']);
+-            $resultat = $fedapay->initierTransaction((float) $paiement->montant, $description, $customer);
+-
+-            $paiement->update([
+-                'fedapay_transaction_id' => $resultat['transaction_id'],
+-            ]);
+-
+-            return response()->json([
+-                'success' => true,
+-                'data' => [
+-                    'paiement_id' => $paiement->id,
+-                    'checkout_url' => $resultat['checkout_url'],
+-                ],
+-            ]);
+-        } catch (\Exception $e) {
+-            Log::error('Erreur initiation FedaPay', ['erreur' => $e->getMessage(), 'paiement_id' => $paiement->id]);
+-
+-            $paiement->update(['statut' => 'echoue']);
+-
+-            return response()->json([
+-                'success' => false,
+-                'message' => "Impossible de contacter FedaPay pour l'instant, réessayez dans un instant.",
+-            ], 502);
+-        }
+-    }
+-
+-    private function splitNom(?string $nomComplet): array
+-    {
+-        if (!$nomComplet) {
+-            return [null, null];
+-        }
+-        $parts = preg_split('/\s+/', trim($nomComplet), 2);
+-        return [$parts[0] ?? null, $parts[1] ?? null];
+-    }
+-
+-    /**
+-     * Webhook FedaPay : notification serveur-à-serveur à chaque changement
+-     * d'état d'une transaction. Route publique, protégée par la vérification
+-     * de signature (X-FEDAPAY-SIGNATURE) plutôt que par Sanctum.
+-     *
+-     * POST /paiements/webhook
+-     */
+-    public function webhook(Request $request, FedaPayService $fedapay)
+-    {
+-        $signature = $request->header('X-FEDAPAY-SIGNATURE', '');
+-
+-        try {
+-            $event = $fedapay->verifierWebhook($request->getContent(), $signature);
+-        } catch (\Exception $e) {
+-            Log::warning('Webhook FedaPay rejeté : signature invalide', ['erreur' => $e->getMessage()]);
+-            return response()->json(['success' => false], 400);
 -        }
 -
-         if ($paiement->type === 'evenement' && $paiement->evenement_id) {
-             Evenement::whereKey($paiement->evenement_id)->increment('nombre_inscrits');
-         }
-diff --git a/app/Mail/ConfirmationAdhesion.php b/app/Mail/ConfirmationAdhesion.php
+-        $transactionId = $event->entity->id ?? null;
+-        $paiement = $transactionId ? Paiement::where('fedapay_transaction_id', $transactionId)->first() : null;
+-
+-        if (!$paiement) {
+-            // Transaction inconnue de notre système (ou déjà traitée) : on
+-            // répond 200 quand même pour éviter les tentatives répétées de FedaPay.
+-            return response()->json(['success' => true]);
+-        }
+-
+-        $paiement->fedapay_derniere_reponse = json_encode($event);
+-
+-        switch ($event->name ?? null) {
+-            case 'transaction.approved':
+-                $paiement->statut = 'reussi';
+-                $paiement->save();
+-                $this->appliquerPaiementReussi($paiement);
+-                break;
+-
+-            case 'transaction.declined':
+-                $paiement->statut = 'echoue';
+-                $paiement->save();
+-                break;
+-
+-            case 'transaction.canceled':
+-                $paiement->statut = 'annule';
+-                $paiement->save();
+-                break;
+-
+-            default:
+-                $paiement->save();
+-                break;
+-        }
+-
+-        return response()->json(['success' => true]);
+-    }
+-
+-    /**
+-     * Répercute un paiement confirmé sur les données métier : marque la
+-     * cotisation payée, ou incrémente le nombre d'inscrits à l'événement.
+-     */
+-    private function appliquerPaiementReussi(Paiement $paiement): void
+-    {
+-        if ($paiement->type === 'evenement' && $paiement->evenement_id) {
+-            Evenement::whereKey($paiement->evenement_id)->increment('nombre_inscrits');
+-        }
+-    }
+-}
+diff --git a/app/Http/Controllers/API/RessortissantAdminController.php b/app/Http/Controllers/API/RessortissantAdminController.php
+index 057b7b5..e54ea4f 100644
+--- a/app/Http/Controllers/API/RessortissantAdminController.php
++++ b/app/Http/Controllers/API/RessortissantAdminController.php
+@@ -222,7 +222,6 @@ private function formater(Ressortissant $r, bool $detaille = false): array
+                 'numero_piece' => $r->numero_piece,
+                 'date_expiration_piece' => $r->date_expiration_piece?->format('d/m/Y'),
+                 'adresse' => $r->adresse,
+-                'commune' => $r->commune,
+                 'latitude' => $r->latitude,
+                 'longitude' => $r->longitude,
+                 'date_arrivee' => $r->date_arrivee?->format('d/m/Y'),
+diff --git a/app/Http/Controllers/API/StatistiquesPubliquesController.php b/app/Http/Controllers/API/StatistiquesPubliquesController.php
+index 6ec9de5..4186052 100644
+--- a/app/Http/Controllers/API/StatistiquesPubliquesController.php
++++ b/app/Http/Controllers/API/StatistiquesPubliquesController.php
+@@ -3,7 +3,7 @@
+ namespace App\Http\Controllers\API;
+ 
+ use App\Http\Controllers\Controller;
+-use App\Models\Membre;
++use App\Models\Ressortissant;
+ use App\Models\Partenaire;
+ 
+ class StatistiquesPubliquesController extends Controller
+@@ -12,6 +12,10 @@ class StatistiquesPubliquesController extends Controller
+      * Chiffres clés réels affichés sur la page d'accueil (section "stats").
+      * Volontairement minimal : uniquement ce qui est réellement mesurable
+      * depuis les données existantes.
++     *
++     * Remplace l'ancien compteur "membres_actifs" (AJDCB, Membre::actif())
++     * par le registre consulaire — la clé JSON change donc de nom, à
++     * répercuter côté front (section stats de la page d'accueil).
+      */
+     public function index()
+     {
+@@ -19,7 +23,7 @@ public function index()
+             return response()->json([
+                 'success' => true,
+                 'data' => [
+-                    'membres_actifs' => Membre::actif()->count(),
++                    'ressortissants_inscrits' => Ressortissant::actif()->inscrits()->count(),
+                     'partenaires_actifs' => Partenaire::actif()->count(),
+                 ],
+             ]);
+diff --git a/app/Http/Middleware/EnsureIsMembre.php b/app/Http/Middleware/EnsureIsMembre.php
 deleted file mode 100644
-index 508798d..0000000
---- a/app/Mail/ConfirmationAdhesion.php
+index 0564d9a..0000000
+--- a/app/Http/Middleware/EnsureIsMembre.php
 +++ /dev/null
-@@ -1,36 +0,0 @@
+@@ -1,27 +0,0 @@
+-<?php
+-
+-namespace App\Http\Middleware;
+-
+-use App\Models\Membre;
+-use Closure;
+-use Illuminate\Http\Request;
+-
+-// Un token Sanctum valide peut appartenir soit à un User (espace admin),
+-// soit à un Membre (espace membre) — auth:sanctum seul ne fait pas la
+-// différence. Ce middleware bloque un token admin sur les routes membre
+-// (et empêchera symétriquement un token membre d'accéder aux routes admin,
+-// qui vérifient déjà $user->role via CheckRole — un Membre n'en a pas).
+-class EnsureIsMembre
+-{
+-    public function handle(Request $request, Closure $next)
+-    {
+-        if (!$request->user() instanceof Membre) {
+-            return response()->json([
+-                'success' => false,
+-                'message' => 'Accès réservé à l\'espace membre'
+-            ], 403);
+-        }
+-
+-        return $next($request);
+-    }
+-}
+diff --git a/app/Mail/ActivationCompteMembre.php b/app/Mail/ActivationCompteMembre.php
+deleted file mode 100644
+index 339dda9..0000000
+--- a/app/Mail/ActivationCompteMembre.php
++++ /dev/null
+@@ -1,43 +0,0 @@
 -<?php
 -
 -namespace App\Mail;
 -
--use App\Models\Adhesion;
+-use App\Models\Membre;
 -use Illuminate\Bus\Queueable;
 -use Illuminate\Mail\Mailable;
 -use Illuminate\Mail\Mailables\Content;
 -use Illuminate\Mail\Mailables\Envelope;
 -use Illuminate\Queue\SerializesModels;
 -
--class ConfirmationAdhesion extends Mailable
+-class ActivationCompteMembre extends Mailable
 -{
 -    use Queueable, SerializesModels;
 -
--    public Adhesion $adhesion;
+-    public Membre $membre;
+-    public string $lienActivation;
+-    public bool $reinitialisation;
 -
--    public function __construct(Adhesion $adhesion)
+-    public function __construct(Membre $membre, bool $reinitialisation = false)
 -    {
--        $this->adhesion = $adhesion;
+-        $this->membre = $membre;
+-        $this->reinitialisation = $reinitialisation;
+-        $this->lienActivation = rtrim(config('app.frontend_url'), '/')
+-            . '/activer-compte?token=' . $membre->activation_token;
 -    }
 -
 -    public function envelope(): Envelope
 -    {
 -        return new Envelope(
--            subject: 'Confirmation de votre demande d\'adhésion - AJDCB',
+-            subject: $this->reinitialisation
+-                ? 'Réinitialisation de votre mot de passe AJDCB'
+-                : 'Activez votre espace membre AJDCB',
 -        );
 -    }
 -
 -    public function content(): Content
 -    {
 -        return new Content(
--            view: 'emails.confirmation-adhesion',
+-            view: 'emails.activation-compte-membre',
 -        );
 -    }
 -}
-\ No newline at end of file
-diff --git a/app/Mail/CotisationRappel.php b/app/Mail/CotisationRappel.php
+diff --git a/app/Mail/MembreRadieAutomatiquement.php b/app/Mail/MembreRadieAutomatiquement.php
 deleted file mode 100644
-index b7a91b7..0000000
---- a/app/Mail/CotisationRappel.php
+index 413f455..0000000
+--- a/app/Mail/MembreRadieAutomatiquement.php
 +++ /dev/null
 @@ -1,42 +0,0 @@
 -<?php
@@ -1217,133 +1893,43 @@ index b7a91b7..0000000
 -use Illuminate\Mail\Mailables\Envelope;
 -use Illuminate\Queue\SerializesModels;
 -
--class CotisationRappel extends Mailable
+-class MembreRadieAutomatiquement extends Mailable
 -{
 -    use Queueable, SerializesModels;
 -
 -    public Membre $membre;
 -    public int $moisRetard;
--    public bool $avertissementFinal;
+-    public bool $pourBureau;
 -
--    public function __construct(Membre $membre, int $moisRetard, bool $avertissementFinal = false)
+-    public function __construct(Membre $membre, int $moisRetard, bool $pourBureau = false)
 -    {
 -        $this->membre = $membre;
 -        $this->moisRetard = $moisRetard;
--        $this->avertissementFinal = $avertissementFinal;
+-        $this->pourBureau = $pourBureau;
 -    }
 -
 -    public function envelope(): Envelope
 -    {
 -        return new Envelope(
--            subject: $this->avertissementFinal
--                ? 'Cotisation AJDCB : dernier rappel avant radiation'
--                : 'Rappel : votre cotisation AJDCB du mois',
+-            subject: $this->pourBureau
+-                ? 'Radiation automatique : ' . $this->membre->prenom . ' ' . $this->membre->nom
+-                : 'Votre radiation de l\'AJDCB',
 -        );
 -    }
 -
 -    public function content(): Content
 -    {
 -        return new Content(
--            view: 'emails.cotisation-rappel',
+-            view: 'emails.membre-radie',
 -        );
 -    }
 -}
-diff --git a/app/Mail/NotificationNouvelleAdhesion.php b/app/Mail/NotificationNouvelleAdhesion.php
+diff --git a/app/Models/Action.php b/app/Models/Action.php
 deleted file mode 100644
-index 19ec60c..0000000
---- a/app/Mail/NotificationNouvelleAdhesion.php
+index a5863dc..0000000
+--- a/app/Models/Action.php
 +++ /dev/null
-@@ -1,37 +0,0 @@
--<?php
--// App\Mail\NotificationNouvelleAdhesion.php
--
--namespace App\Mail;
--
--use App\Models\Adhesion;
--use Illuminate\Bus\Queueable;
--use Illuminate\Mail\Mailable;
--use Illuminate\Queue\SerializesModels;
--
--class NotificationNouvelleAdhesion extends Mailable
--{
--    use Queueable, SerializesModels;
--
--    public $adhesion;
--
--    public function __construct(Adhesion $adhesion)
--    {
--        $this->adhesion = $adhesion;
--    }
--
--    public function build()
--    {
--        return $this->subject('Nouvelle demande d\'adhésion - AJDCB')
--                    ->markdown('emails.nouvelle-adhesion')
--                    ->with([
--                        'nom' => $this->adhesion->nom,
--                        'prenom' => $this->adhesion->prenom,
--                        'email' => $this->adhesion->email,
--                        'telephone' => $this->adhesion->telephone,
--                        'ville' => $this->adhesion->ville,
--                        'dashboardUrl' => url('/dashboard/adhesions/' . $this->adhesion->id),
--                        'listeUrl' => url('/dashboard/adhesions')
--                    ]);
--    }
--}
--
-diff --git a/app/Mail/NotificationTraitementAdhesion.php b/app/Mail/NotificationTraitementAdhesion.php
-deleted file mode 100644
-index 22f9269..0000000
---- a/app/Mail/NotificationTraitementAdhesion.php
-+++ /dev/null
-@@ -1,40 +0,0 @@
--<?php
--
--namespace App\Mail;
--
--use App\Models\Adhesion;
--use Illuminate\Bus\Queueable;
--use Illuminate\Mail\Mailable;
--use Illuminate\Mail\Mailables\Content;
--use Illuminate\Mail\Mailables\Envelope;
--use Illuminate\Queue\SerializesModels;
--
--class NotificationTraitementAdhesion extends Mailable
--{
--    use Queueable, SerializesModels;
--
--    public Adhesion $adhesion;
--
--    public function __construct(Adhesion $adhesion)
--    {
--        $this->adhesion = $adhesion;
--    }
--
--    public function envelope(): Envelope
--    {
--        $sujet = $this->adhesion->statut === 'approuvee' 
--            ? 'Votre adhésion à l\'AJDCB a été approuvée' 
--            : 'Statut de votre demande d\'adhésion à l\'AJDCB';
--
--        return new Envelope(
--            subject: $sujet,
--        );
--    }
--
--    public function content(): Content
--    {
--        return new Content(
--            view: 'emails.notification-traitement-adhesion',
--        );
--    }
--}
-\ No newline at end of file
-diff --git a/app/Models/Adhesion.php b/app/Models/Adhesion.php
-deleted file mode 100644
-index 272150f..0000000
---- a/app/Models/Adhesion.php
-+++ /dev/null
-@@ -1,172 +0,0 @@
+@@ -1,153 +0,0 @@
 -<?php
 -
 -namespace App\Models;
@@ -1353,101 +1939,419 @@ index 272150f..0000000
 -use Illuminate\Database\Eloquent\Factories\HasFactory;
 -use Illuminate\Database\Eloquent\Model;
 -
--class Adhesion extends Model
+-class Action extends Model
 -{
 -    use HasFactory;
 -
--    protected $table = 'adhesions';
--
 -    protected $fillable = [
--        // Identité
--        'nom', 'prenom', 'nom_marital', 'sexe', 'date_naissance', 'lieu_naissance',
--        'situation_matrimoniale', 'nombre_enfants_charge',
--        // Nationalité & pièces
--        'nationalite', 'est_congolais', 'possede_carte_consulaire', 'carte_consulaire_fichier',
--        'duree_au_benin', 'possede_cipr', 'cipr_fichier', 'photo',
--        // Coordonnées
--        'email', 'telephone', 'autre_telephone', 'adresse', 'ville',
--        // Statut professionnel
--        'profession', 'profession_autre', 'niveau_etude', 'niveau_etude_autre',
--        'dernier_diplome', 'dernier_diplome_autre',
--        // Entrepreneur
--        'entrepreneur_domaine', 'entrepreneur_domaine_autre', 'entrepreneur_duree',
--        'entrepreneur_nom_entreprise', 'entrepreneur_fonction',
--        // Étudiant
--        'etablissement', 'etudiant_filiere', 'etudiant_annee',
--        // Compétences, intérêts, langues
--        'competences', 'competences_autre', 'centres_interet', 'domaines_interet_autre',
--        'loisirs', 'loisirs_autre', 'disponibilite', 'langues',
--        // Engagement associatif
--        'comment_connu', 'comment_connu_autre', 'recommande_par', 'motivation',
--        'experience_associative', 'experience_associative_details', 'commissions_souhaitees', 'attentes',
--        // Déclaration
--        'declarant_nom_complet', 'accepte_conditions', 'souhaite_recevoir_actualites',
--        'lettre_demande_fichiers',
--        // Divers
--        'commentaire',
--        // Traitement
--        'statut', 'date_traitement', 'commentaire_traitement', 'traite_par',
+-        'titre',
+-        'description',
+-        'section',
+-        'image',
+-        'date_debut',
+-        'date_fin',
+-        'date_evenement',
+-        'lieu',
+-        'objectifs',
+-        'activites_cles',
+-        'resultats',
+-        'statut'
 -    ];
 -
 -    protected $casts = [
--        'date_naissance' => 'date',
--        'date_traitement' => 'datetime',
--        'competences' => 'array',
--        'centres_interet' => 'array',
--        'loisirs' => 'array',
--        'langues' => 'array',
--        'commissions_souhaitees' => 'array',
--        'lettre_demande_fichiers' => 'array',
--        'est_congolais' => 'boolean',
--        'possede_carte_consulaire' => 'boolean',
--        'possede_cipr' => 'boolean',
--        'experience_associative' => 'boolean',
--        'accepte_conditions' => 'boolean',
--        'souhaite_recevoir_actualites' => 'boolean',
--        'nombre_enfants_charge' => 'integer',
+-        'objectifs' => 'array',
+-        'activites_cles' => 'array',
+-        'resultats' => 'array',
+-        'date_debut' => 'date',
+-        'date_fin' => 'date',
+-        'date_evenement' => 'date',
 -        'created_at' => 'datetime',
--        'updated_at' => 'datetime',
+-        'updated_at' => 'datetime'
 -    ];
 -
 -    /**
 -     * Relations
 -     */
--    public function traitePar()
+-    public function medias()
 -    {
--        return $this->belongsTo(User::class, 'traite_par');
--    }
--
--    public function membre()
--    {
--        return $this->hasOne(Membre::class, 'adhesion_id');
+-        return $this->hasMany(ActionMedia::class);
 -    }
 -
 -    /**
 -     * Scopes
 -     */
--    public function scopeEnAttente($query)
+-    public function scopeBySection($query, $section)
 -    {
--        return $query->where('statut', 'en_attente');
+-        return $query->where('section', $section);
 -    }
 -
--    public function scopeApprouvee($query)
+-    public function scopeActif($query)
 -    {
--        return $query->where('statut', 'approuvee');
+-        return $query->where('statut', 'actif');
 -    }
 -
--    public function scopeRejetee($query)
+-    public function scopeAVenir($query)
 -    {
--        return $query->where('statut', 'rejetee');
+-        return $query->where('statut', 'a_venir');
 -    }
 -
--    public function scopeByVille($query, $ville)
+-    public function scopeTermine($query)
 -    {
--        return $query->where('ville', 'like', "%$ville%");
+-        return $query->where('statut', 'termine');
 -    }
 -
--    protected $appends = ['nom_complet', 'age', 'statut_label', 'statut_color', 'date_soumission', 'date_naissance_format', 'photo_url', 'carte_consulaire_fichier_url', 'cipr_fichier_url', 'lettre_demande_fichiers_urls'];
+-    protected $appends = ['image_url', 'section_label', 'statut_label', 'statut_color', 'date_affichage', 'lieu_affichage', 'objectifs_liste', 'activites_liste', 'resultats_liste'];
+-
+-    /**
+-     * Accesseurs
+-     */
+-    public function getImageUrlAttribute()
+-    {
+-        return $this->image ? Storage::disk('public')->url($this->image) : null;
+-    }
+-
+-    public function getSectionLabelAttribute()
+-    {
+-        $labels = [
+-            'solidarite' => 'Solidarité & Intégration',
+-            'education' => 'Éducation & Formation',
+-            'culture' => 'Culture & Identité',
+-            'communication' => 'Communication & Partenariats'
+-        ];
+-
+-        return $labels[$this->section] ?? $this->section;
+-    }
+-
+-    public function getStatutLabelAttribute()
+-    {
+-        $labels = [
+-            'actif' => 'En cours',
+-            'inactif' => 'Inactif',
+-            'a_venir' => 'À venir',
+-            'termine' => 'Terminé'
+-        ];
+-
+-        return $labels[$this->statut] ?? $this->statut;
+-    }
+-
+-    public function getStatutColorAttribute()
+-    {
+-        $colors = [
+-            'actif' => 'success',
+-            'inactif' => 'danger',
+-            'a_venir' => 'warning',
+-            'termine' => 'secondary'
+-        ];
+-
+-        return $colors[$this->statut] ?? 'primary';
+-    }
+-
+-    public function getDateAffichageAttribute()
+-    {
+-        if ($this->date_evenement) {
+-            return $this->date_evenement->format('d/m/Y');
+-        }
+-        
+-        if ($this->date_debut && $this->date_fin) {
+-            return 'Du ' . $this->date_debut->format('d/m/Y') . ' au ' . $this->date_fin->format('d/m/Y');
+-        }
+-        
+-        if ($this->date_debut) {
+-            return 'À partir du ' . $this->date_debut->format('d/m/Y');
+-        }
+-        
+-        return 'Date non définie';
+-    }
+-
+-    public function getLieuAffichageAttribute()
+-    {
+-        return $this->lieu ?? 'Lieu non défini';
+-    }
+-
+-    public function getObjectifsListeAttribute()
+-    {
+-        return is_array($this->objectifs) ? $this->objectifs : [];
+-    }
+-
+-    public function getActivitesListeAttribute()
+-    {
+-        return is_array($this->activites_cles) ? $this->activites_cles : [];
+-    }
+-
+-    public function getResultatsListeAttribute()
+-    {
+-        return is_array($this->resultats) ? $this->resultats : [];
+-    }
+-}
+\ No newline at end of file
+diff --git a/app/Models/Evenement.php b/app/Models/Evenement.php
+deleted file mode 100644
+index 735d28f..0000000
+--- a/app/Models/Evenement.php
++++ /dev/null
+@@ -1,139 +0,0 @@
+-<?php
+-
+-namespace App\Models;
+-
+-use App\Models\Concerns\BelongsToEntity;
+-use Illuminate\Support\Facades\Storage;
+-
+-use Illuminate\Database\Eloquent\Factories\HasFactory;
+-use Illuminate\Database\Eloquent\Model;
+-
+-/**
+- * Sert la page Agenda. En V1, simple liste liée aux Actualités, sans
+- * inscription (le calendrier complet avec inscription est prévu en V2 —
+- * cf. document du projet). ->participants() et ->partenaires() du modèle
+- * AJDCB pointaient vers les tables participations/partenaires_evenements,
+- * supprimées avec le nettoyage des tables associatives ; ->galerie()
+- * pointait vers une classe EvenementMedia qui n'a jamais existé. Les trois
+- * sont retirées plutôt que laissées à planter au premier appel.
+- */
+-class Evenement extends Model
+-{
+-    use HasFactory, BelongsToEntity;
+-
+-    protected $table = 'evenements';
+-
+-    protected $fillable = [
+-        'entity_id',
+-        'titre',
+-        'description',
+-        'contenu',
+-        'image',
+-        'date_debut',
+-        'date_fin',
+-        'heure_debut',
+-        'heure_fin',
+-        'lieu',
+-        'adresse',
+-        'ville',
+-        'type',
+-        'categorie',
+-        'capacite_max',
+-        'nombre_inscrits',
+-        'prix',
+-        'devise',
+-        'lien_billet',
+-        'organisateur',
+-        'contact_organisateur',
+-        'email_contact',
+-        'telephone_contact',
+-        'documents',
+-        'statut'
+-    ];
+-
+-    protected $casts = [
+-        'documents' => 'array',
+-        'date_debut' => 'date',
+-        'date_fin' => 'date',
+-        'heure_debut' => 'datetime',
+-        'heure_fin' => 'datetime',
+-        'created_at' => 'datetime',
+-        'updated_at' => 'datetime'
+-    ];
+-
+-    /**
+-     * Scopes
+-     */
+-    public function scopeAVenir($query)
+-    {
+-        return $query->where('date_debut', '>=', now())
+-                     ->where('statut', 'publie');
+-    }
+-
+-    public function scopePasses($query)
+-    {
+-        return $query->where('date_fin', '<', now())
+-                     ->where('statut', 'publie');
+-    }
+-
+-    public function scopeEnCours($query)
+-    {
+-        return $query->where('date_debut', '<=', now())
+-                     ->where('date_fin', '>=', now())
+-                     ->where('statut', 'publie');
+-    }
+-
+-    public function scopeByType($query, $type)
+-    {
+-        return $query->where('type', $type);
+-    }
+-
+-    protected $appends = ['image_url', 'places_restantes', 'est_complet', 'statut_evenement', 'periode'];
+-
+-    /**
+-     * Accesseurs
+-     */
+-    public function getImageUrlAttribute()
+-    {
+-        return $this->image ? Storage::disk('public')->url($this->image) : null;
+-    }
+-
+-    public function getPlacesRestantesAttribute()
+-    {
+-        if (!$this->capacite_max) {
+-            return null;
+-        }
+-        return $this->capacite_max - $this->nombre_inscrits;
+-    }
+-
+-    public function getEstCompletAttribute()
+-    {
+-        if (!$this->capacite_max) {
+-            return false;
+-        }
+-        return $this->nombre_inscrits >= $this->capacite_max;
+-    }
+-
+-    public function getStatutEvenementAttribute()
+-    {
+-        if ($this->date_fin < now()) {
+-            return 'passé';
+-        }
+-        if ($this->date_debut > now()) {
+-            return 'à_venir';
+-        }
+-        return 'en_cours';
+-    }
+-
+-    public function getPeriodeAttribute()
+-    {
+-        $debut = $this->date_debut->format('d/m/Y');
+-        $fin = $this->date_fin->format('d/m/Y');
+-
+-        if ($debut === $fin) {
+-            return $debut . ' de ' . $this->heure_debut->format('H:i') . ' à ' . $this->heure_fin->format('H:i');
+-        }
+-
+-        return 'Du ' . $debut . ' au ' . $fin;
+-    }
+-}
+diff --git a/app/Models/JournalActivite.php b/app/Models/JournalActivite.php
+index 55217df..b29241b 100644
+--- a/app/Models/JournalActivite.php
++++ b/app/Models/JournalActivite.php
+@@ -35,7 +35,7 @@ public function user()
+      *
+      * @param string $action Identifiant court, ex. 'membre.supprimer'
+      * @param string $description Résumé lisible, déjà formaté
+-     * @param Model|null $sujet Le modèle concerné (Membre, User, Demande...)
++     * @param Model|null $sujet Le modèle concerné (Ressortissant, User, Demande...)
+      * @param array $donnees Contexte structuré additionnel, optionnel
+      */
+     public static function enregistrer(string $action, string $description, ?Model $sujet = null, array $donnees = []): void
+diff --git a/app/Models/Membre.php b/app/Models/Membre.php
+deleted file mode 100644
+index 2867fea..0000000
+--- a/app/Models/Membre.php
++++ /dev/null
+@@ -1,174 +0,0 @@
+-<?php
+-
+-namespace App\Models;
+-
+-use Illuminate\Support\Facades\Storage;
+-
+-use Illuminate\Database\Eloquent\Factories\HasFactory;
+-use Illuminate\Foundation\Auth\User as Authenticatable;
+-use Illuminate\Notifications\Notifiable;
+-use Laravel\Sanctum\HasApiTokens;
+-
+-// Authenticatable (et non Model) : un Membre peut désormais posséder des
+-// tokens Sanctum et se connecter à l'espace membre, séparément des comptes
+-// `User` (admin/super_admin/moderateur) qui gardent leur propre espace.
+-class Membre extends Authenticatable
+-{
+-    use HasFactory, HasApiTokens, Notifiable;
+-
+-    protected $fillable = [
+-        'adhesion_id',
+-        'nom',
+-        'prenom',
+-        'photo',
+-        'facebook',
+-        'instagram',
+-        'linkedin',
+-        'twitter',
+-        'whatsapp',
+-        'ville',
+-        'poste',
+-        'commission',
+-        'statut',
+-        'motif_inactivation',
+-        'email',
+-        'password',
+-        'email_verified_at',
+-        'derniere_connexion',
+-        'activation_token',
+-        'activation_token_expire_at',
+-    ];
+-
+-    protected $hidden = [
+-        'password',
+-        'activation_token',
+-    ];
+-
+-    protected $casts = [
+-        'created_at' => 'datetime',
+-        'updated_at' => 'datetime',
+-        'email_verified_at' => 'datetime',
+-        'derniere_connexion' => 'datetime',
+-        'activation_token_expire_at' => 'datetime',
+-    ];
+-
+-    protected $appends = ['nom_complet', 'photo_url', 'role', 'peut_avoir_acces_admin', 'a_compte_admin'];
+-
+-    /**
+-     * Postes du bureau pouvant donner lieu à un accès admin, et rôle admin
+-     * associé (voir MembreController::creerAccesAdmin). Les autres postes
+-     * (Chargé des Projets, Chargé des Relations Extérieures, Conseiller) et
+-     * les simples membres de commission n'ont pas d'accès par défaut — un
+-     * compte peut toujours être créé à la main si besoin.
+-     */
+-    public const POSTES_ADMIN_ELIGIBLES = [
+-        'Président' => 'super_admin',
+-        'Vice-Président' => 'super_admin',
+-        'Secrétaire Général' => 'admin',
+-        'Secrétaire Général Adjoint' => 'admin',
+-        'Trésorier Général' => 'tresorier',
+-        'Trésorier Général Adjoint' => 'tresorier',
+-        'Chargé de Communication' => 'moderateur',
+-    ];
+-
+-    /**
+-     * Les 77 communes du Bénin (source : Wikipédia / decentralisation.gouv.bj),
+-     * utilisées comme "ville" de résidence du membre — l'association ayant des
+-     * canaux distincts par ville (Cotonou, Ouidah, etc.).
+-     */
+-    public const VILLES_BENIN = [
+-        // Alibori
+-        'Banikoara', 'Gogounou', 'Kandi', 'Karimama', 'Malanville', 'Ségbana',
+-        // Atacora
+-        'Boukoumbé', 'Cobly', 'Kérou', 'Kouandé', 'Matéri', 'Natitingou', 'Péhunco', 'Tanguiéta', 'Toucountouna',
+-        // Atlantique
+-        'Abomey-Calavi', 'Allada', 'Kpomassè', 'Ouidah', 'Sô-Ava', 'Toffo', 'Tori-Bossito', 'Zè',
+-        // Borgou
+-        'Bembéréké', 'Kalalé', "N'Dali", 'Nikki', 'Parakou', 'Pèrèrè', 'Sinendé', 'Tchaourou',
+-        // Collines
+-        'Bantè', 'Dassa-Zoumè', 'Glazoué', 'Ouèssè', 'Savalou', 'Savè',
+-        // Couffo
+-        'Aplahoué', 'Djakotomey', 'Dogbo', 'Klouékanmè', 'Lalo', 'Toviklin',
+-        // Donga
+-        'Bassila', 'Copargo', 'Djougou', 'Ouaké',
+-        // Littoral
+-        'Cotonou',
+-        // Mono
+-        'Athiémé', 'Bopa', 'Comè', 'Grand-Popo', 'Houéyogbé', 'Lokossa',
+-        // Ouémé
+-        'Adjarra', 'Adjohoun', 'Aguégués', 'Akpro-Missérété', 'Avrankou', 'Bonou', 'Dangbo', 'Porto-Novo', 'Sèmè-Kpodji',
+-        // Plateau
+-        'Adja-Ouèrè', 'Ifangni', 'Kétou', 'Pobè', 'Sakété',
+-        // Zou
+-        'Abomey', 'Agbangnizoun', 'Bohicon', 'Covè', 'Djidja', 'Ouinhi', 'Za-Kpota', 'Zagnanado', 'Zogbodomey',
+-    ];
 -
 -    /**
 -     * Accesseurs
@@ -1457,302 +2361,1014 @@ index 272150f..0000000
 -        return $this->prenom . ' ' . $this->nom;
 -    }
 -
--    public function getAgeAttribute()
--    {
--        return $this->date_naissance?->age;
--    }
--
--    public function getStatutLabelAttribute()
--    {
--        $labels = [
--            'en_attente' => 'En attente',
--            'approuvee' => 'Approuvée',
--            'rejetee' => 'Rejetée'
--        ];
--
--        return $labels[$this->statut] ?? $this->statut;
--    }
--
--    public function getStatutColorAttribute()
--    {
--        $colors = [
--            'en_attente' => 'warning',
--            'approuvee' => 'success',
--            'rejetee' => 'danger'
--        ];
--
--        return $colors[$this->statut] ?? 'secondary';
--    }
--
--    public function getDateSoumissionAttribute()
--    {
--        return $this->created_at->format('d/m/Y à H:i');
--    }
--
--    public function getDateNaissanceFormatAttribute()
--    {
--        return $this->date_naissance?->format('d/m/Y');
--    }
--
 -    public function getPhotoUrlAttribute()
 -    {
 -        return $this->photo ? Storage::disk('public')->url($this->photo) : null;
 -    }
 -
--    public function getCarteConsulaireFichierUrlAttribute()
+-    public function getRoleAttribute()
 -    {
--        return $this->carte_consulaire_fichier ? Storage::disk('public')->url($this->carte_consulaire_fichier) : null;
+-        if ($this->poste) {
+-            return $this->poste;
+-        }
+-        if ($this->commission) {
+-            return 'Commission ' . $this->commission;
+-        }
+-        return 'Membre actif';
 -    }
 -
--    public function getCiprFichierUrlAttribute()
+-    public function getPeutAvoirAccesAdminAttribute()
 -    {
--        return $this->cipr_fichier ? Storage::disk('public')->url($this->cipr_fichier) : null;
+-        return $this->poste && array_key_exists($this->poste, self::POSTES_ADMIN_ELIGIBLES);
 -    }
 -
--    public function getLettreDemandeFichiersUrlsAttribute()
+-    public function getACompteAdminAttribute()
 -    {
--        return collect($this->lettre_demande_fichiers ?? [])
--            ->map(fn($path) => Storage::disk('public')->url($path))
--            ->values();
+-        return $this->relationLoaded('compteAdmin')
+-            ? $this->compteAdmin !== null
+-            : $this->compteAdmin()->exists();
+-    }
+-
+-    /**
+-     * Relations
+-     */
+-    public function compteAdmin()
+-    {
+-        return $this->hasOne(User::class);
+-    }
+-
+-    public function evenements()
+-    {
+-        return $this->belongsToMany(Evenement::class, 'participations')
+-                    ->withPivot('statut', 'date_inscription', 'commentaire')
+-                    ->withTimestamps();
+-    }
+-
+-    /**
+-     * Scopes
+-     */
+-    public function scopeActif($query)
+-    {
+-        return $query->where('statut', 'actif');
+-    }
+-
+-    public function scopeBureau($query)
+-    {
+-        return $query->whereNotNull('poste');
+-    }
+-
+-    public function scopeCommission($query, $commission)
+-    {
+-        return $query->where('commission', $commission);
 -    }
 -}
-diff --git a/app/Models/Cotisation.php b/app/Models/Cotisation.php
+\ No newline at end of file
+diff --git a/bootstrap/app.php b/bootstrap/app.php
+index ea14ec1..a21dc1a 100644
+--- a/bootstrap/app.php
++++ b/bootstrap/app.php
+@@ -19,7 +19,6 @@
+         $middleware->alias([
+             'admin' => \App\Http\Middleware\AdminMiddleware::class,
+             'role' => \App\Http\Middleware\CheckRole::class,
+-            'membre' => \App\Http\Middleware\EnsureIsMembre::class,
+         ]);
+ 
+         // Résout l'entité (consulat/ambassade) courante en tout début de
+diff --git a/database/migrations/2026_01_03_000000_drop_evenements_table.php b/database/migrations/2026_01_03_000000_drop_evenements_table.php
+new file mode 100644
+index 0000000..102c60b
+--- /dev/null
++++ b/database/migrations/2026_01_03_000000_drop_evenements_table.php
+@@ -0,0 +1,38 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * Supprime la table `evenements`, héritée d'AJDCB. En V1, l'Agenda affiche
++ * les Actualités de type "evenement" (colonnes date_evenement/
++ * lieu_evenement déjà présentes sur `actualites`) — cf. document du
++ * projet : "Agenda — liste des événements liée aux Actualités au début ;
++ * calendrier complet avec inscription en V2".
++ *
++ * Cette table portait la billetterie/inscription (capacite_max, prix,
++ * lien_billet, nombre_inscrits) prévue pour ce calendrier V2, mais
++ * n'était alimentée par aucun flux d'inscription fonctionnel — son
++ * contrôleur admin (EvenementController) et sa page front (AdminEvenements)
++ * sont retirés dans le même mouvement. Si le calendrier V2 avec
++ * inscription se construit un jour, il vaudra mieux repartir d'un schéma
++ * neuf pensé pour l'inscription (participants, places restantes en temps
++ * réel) plutôt que de ressusciter celui-ci tel quel.
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::dropIfExists('evenements');
++    }
++
++    /**
++     * Rollback volontairement non implémenté : recréer une table vide sans
++     * les données perdues n'aurait aucun intérêt. Pour revenir en arrière,
++     * repartir de 2026_01_01_000010_create_evenements_table.php.
++     */
++    public function down(): void
++    {
++        // no-op
++    }
++};
+diff --git a/database/migrations/2026_01_03_000001_drop_commune_from_ressortissants_table.php b/database/migrations/2026_01_03_000001_drop_commune_from_ressortissants_table.php
+new file mode 100644
+index 0000000..11d3eef
+--- /dev/null
++++ b/database/migrations/2026_01_03_000001_drop_commune_from_ressortissants_table.php
+@@ -0,0 +1,31 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * Correction de schéma : `ville` et `commune` faisaient doublon.
++ *
++ * Au Bénin, la commune EST l'unité administrative de base (les 77 communes
++ * listées dans Ressortissant::VILLES_BENIN) — il n'y a pas de "ville"
++ * distincte au-dessus. La granularité demandée par le projet (registre
++ * jusqu'au quartier) est : commune (colonne `ville`, valeur parmi
++ * VILLES_BENIN) > quartier (`quartier`, texte libre, pas de liste fermée).
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        Schema::table('ressortissants', function (Blueprint $table) {
++            $table->dropColumn('commune');
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::table('ressortissants', function (Blueprint $table) {
++            $table->string('commune')->nullable()->after('ville');
++        });
++    }
++};
+diff --git a/database/migrations/ConsulatCongoBeninSeeder.php b/database/migrations/ConsulatCongoBeninSeeder.php
 deleted file mode 100644
-index e7e5761..0000000
---- a/app/Models/Cotisation.php
+index 37289db..0000000
+--- a/database/migrations/ConsulatCongoBeninSeeder.php
 +++ /dev/null
-@@ -1,49 +0,0 @@
+@@ -1,118 +0,0 @@
 -<?php
 -
--namespace App\Models;
+-namespace Database\Seeders;
 -
--use Illuminate\Database\Eloquent\Factories\HasFactory;
--use Illuminate\Database\Eloquent\Model;
+-use Illuminate\Database\Seeder;
+-use Illuminate\Support\Facades\DB;
 -
--class Cotisation extends Model
+-/**
+- * Données de départ de l'entité République du Congo — Bénin :
+- * grille tarifaire et pièces à fournir.
+- *
+- * Idempotent (updateOrInsert) : relançable après chaque ajustement validé
+- * avec le consulat, sans créer de doublons.
+- *
+- * php artisan db:seed --class=ConsulatCongoBeninSeeder
+- */
+-class ConsulatCongoBeninSeeder extends Seeder
 -{
--    use HasFactory;
+-    private const ENTITY_ID = 1;
 -
--    protected $fillable = [
--        'membre_id',
--        'mois',
--        'montant',
--        'date_paiement',
--        'mode_paiement',
--        'statut',
--        'commentaire',
--        'enregistre_par',
--    ];
--
--    protected $casts = [
--        'date_paiement' => 'date',
--        'montant' => 'decimal:2',
--        'created_at' => 'datetime',
--        'updated_at' => 'datetime',
--    ];
--
--    public function membre()
+-    public function run(): void
 -    {
--        return $this->belongsTo(Membre::class);
+-        $this->tarifs();
+-        $this->documentsRequis();
 -    }
 -
--    public function enregistrePar()
+-    /**
+-     * Tarifs communiqués par le consulat, identiques pour la carte
+-     * consulaire et le laissez-passer. À confirmer pour la carte
+-     * consulaire : les montants ci-dessous sont ceux du laissez-passer.
+-     */
+-    private function tarifs(): void
 -    {
--        return $this->belongsTo(User::class, 'enregistre_par');
+-        $grille = [
+-            ['delai' => '3_jours',   'montant' => 30000, 'delai_heures' => 72],
+-            ['delai' => '24h',       'montant' => 35000, 'delai_heures' => 24],
+-            ['delai' => 'meme_jour', 'montant' => 40000, 'delai_heures' => 8],
+-        ];
+-
+-        foreach (['laissez_passer', 'carte_consulaire'] as $type) {
+-            foreach ($grille as $ligne) {
+-                DB::table('tarifs')->updateOrInsert(
+-                    [
+-                        'entity_id' => self::ENTITY_ID,
+-                        'type_demande' => $type,
+-                        'delai' => $ligne['delai'],
+-                    ],
+-                    [
+-                        'montant' => $ligne['montant'],
+-                        'devise' => 'XOF',
+-                        'delai_heures' => $ligne['delai_heures'],
+-                        'est_actif' => true,
+-                        'updated_at' => now(),
+-                        'created_at' => now(),
+-                    ]
+-                );
+-            }
+-        }
 -    }
 -
--    public function scopePayee($query)
+-    /**
+-     * Pièces à fournir, identiques pour les deux types de demande.
+-     * Modifiables ensuite depuis l'espace admin, sans redéploiement.
+-     */
+-    private function documentsRequis(): void
 -    {
--        return $query->where('statut', 'payee');
--    }
+-        $pieces = [
+-            [
+-                'code_document' => 'photo_identite',
+-                'label' => "Photo d'identité",
+-                'aide' => "Deux photos récentes, fond uni, format 4x4.",
+-                'nombre_requis' => 2,
+-                'formats_acceptes' => 'jpg,jpeg,png',
+-                'ordre' => 1,
+-            ],
+-            [
+-                'code_document' => 'piece_identite',
+-                'label' => "Copie du passeport ou de la carte nationale d'identité",
+-                'aide' => "Page d'identité du passeport, ou recto-verso de la CNI, en un seul fichier.",
+-                'nombre_requis' => 1,
+-                'formats_acceptes' => 'jpg,jpeg,png,pdf',
+-                'ordre' => 2,
+-            ],
+-            [
+-                'code_document' => 'fiche_remplie',
+-                'label' => 'Fiche de demande remplie et signée',
+-                'aide' => "Téléchargez la fiche depuis la page Services consulaires, remplissez-la, signez-la puis scannez-la.",
+-                'nombre_requis' => 1,
+-                'formats_acceptes' => 'pdf,jpg,jpeg,png',
+-                'ordre' => 3,
+-            ],
+-        ];
 -
--    public function scopeMois($query, $mois)
--    {
--        return $query->where('mois', $mois);
+-        foreach (['laissez_passer', 'carte_consulaire'] as $type) {
+-            foreach ($pieces as $piece) {
+-                DB::table('document_types_requis')->updateOrInsert(
+-                    [
+-                        'entity_id' => self::ENTITY_ID,
+-                        'type_demande' => $type,
+-                        'code_document' => $piece['code_document'],
+-                    ],
+-                    [
+-                        'label' => $piece['label'],
+-                        'aide' => $piece['aide'],
+-                        'ordre' => $piece['ordre'],
+-                        'nombre_requis' => $piece['nombre_requis'],
+-                        'formats_acceptes' => $piece['formats_acceptes'],
+-                        'taille_max_ko' => 5120,
+-                        'obligatoire' => true,
+-                        'est_actif' => true,
+-                        'updated_at' => now(),
+-                        'created_at' => now(),
+-                    ]
+-                );
+-            }
+-        }
 -    }
 -}
-diff --git a/app/Models/JournalActivite.php b/app/Models/JournalActivite.php
-index 74dbe69..55217df 100644
---- a/app/Models/JournalActivite.php
-+++ b/app/Models/JournalActivite.php
-@@ -35,7 +35,7 @@ public function user()
-      *
-      * @param string $action Identifiant court, ex. 'membre.supprimer'
-      * @param string $description Résumé lisible, déjà formaté
--     * @param Model|null $sujet Le modèle concerné (Membre, User, Cotisation...)
-+     * @param Model|null $sujet Le modèle concerné (Membre, User, Demande...)
-      * @param array $donnees Contexte structuré additionnel, optionnel
-      */
-     public static function enregistrer(string $action, string $description, ?Model $sujet = null, array $donnees = []): void
-diff --git a/app/Models/Membre.php b/app/Models/Membre.php
-index 01fa026..2867fea 100644
---- a/app/Models/Membre.php
-+++ b/app/Models/Membre.php
-@@ -142,53 +142,11 @@ public function getACompteAdminAttribute()
-     /**
-      * Relations
-      */
--    public function adhesion()
--    {
--        return $this->belongsTo(Adhesion::class);
--    }
--
-     public function compteAdmin()
-     {
-         return $this->hasOne(User::class);
-     }
- 
--    /**
--     * Retard consécutif de cotisation, en mois, jusqu'au mois courant inclus
--     * (Règlement intérieur, Article 3 : radiation automatique à 3 mois
--     * consécutifs). S'arrête à un mois payé ou au mois d'adhésion — voir
--     * cotisations:verifier-retards, qui agit sur cette valeur.
--     */
--    public function retardCotisationConsecutif(): int
--    {
--        $moisAdhesion = $this->created_at->format('Y-m');
--
--        $mois = collect(range(0, 11))->map(fn($i) => now()->subMonths($i)->format('Y-m'));
--
--        $cotisations = Cotisation::where('membre_id', $this->id)
--            ->whereIn('mois', $mois)
--            ->get()
--            ->keyBy('mois');
--
--        $retard = 0;
--        foreach ($mois as $m) {
--            if ($m < $moisAdhesion) {
--                break;
--            }
--            $statut = $cotisations->get($m)->statut ?? 'impayee';
--            if ($statut !== 'impayee') {
--                break;
--            }
--            $retard++;
+diff --git a/resources/views/emails/activation-compte-membre.blade.php b/resources/views/emails/activation-compte-membre.blade.php
+deleted file mode 100644
+index c07c902..0000000
+--- a/resources/views/emails/activation-compte-membre.blade.php
++++ /dev/null
+@@ -1,87 +0,0 @@
+-<!DOCTYPE html>
+-<html lang="fr">
+-<head>
+-    <meta charset="UTF-8">
+-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <title>Activation de votre espace membre</title>
+-    <style>
+-        body {
+-            font-family: Arial, sans-serif;
+-            line-height: 1.6;
+-            color: #333;
+-            max-width: 600px;
+-            margin: 0 auto;
+-            padding: 20px;
 -        }
+-        .header {
+-            background-color: #f8f9fa;
+-            padding: 20px;
+-            text-align: center;
+-            border-bottom: 3px solid #17a2b8;
+-        }
+-        .content {
+-            padding: 30px 20px;
+-            background-color: #ffffff;
+-        }
+-        .bouton {
+-            display: inline-block;
+-            background-color: #17a2b8;
+-            color: #ffffff;
+-            text-decoration: none;
+-            padding: 12px 28px;
+-            border-radius: 5px;
+-            margin: 20px 0;
+-        }
+-        .footer {
+-            text-align: center;
+-            padding: 20px;
+-            font-size: 12px;
+-            color: #6c757d;
+-            background-color: #f8f9fa;
+-        }
+-    </style>
+-</head>
+-<body>
+-    <div class="header">
+-        <h1>Association des Jeunes de la Diaspora Congolaise au Bénin</h1>
+-        <p style="color: #17a2b8; font-style: italic;">Solidarité - Réflexion - Action</p>
+-    </div>
 -
--        return $retard;
--    }
+-    <div class="content">
+-        <h2>Bonjour {{ $membre->prenom }} {{ $membre->nom }},</h2>
 -
--    public function cotisations()
--    {
--        return $this->hasMany(Cotisation::class);
--    }
+-        @if($reinitialisation)
+-            <p>Vous avez demandé la réinitialisation du mot de passe de votre espace membre AJDCB.</p>
 -
-     public function evenements()
-     {
-         return $this->belongsToMany(Evenement::class, 'participations')
+-            <p>Pour choisir un nouveau mot de passe, cliquez sur le bouton ci-dessous :</p>
+-
+-            <p style="text-align: center;">
+-                <a href="{{ $lienActivation }}" class="bouton">Choisir un nouveau mot de passe</a>
+-            </p>
+-
+-            <p>Ce lien est valable 7 jours. Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email — votre mot de passe actuel reste inchangé.</p>
+-        @else
+-            <p><strong>Félicitations, votre adhésion à l'AJDCB a été approuvée !</strong></p>
+-
+-            <p>Votre espace membre vous attend. Il vous permettra de suivre vos cotisations, de vous inscrire aux événements et de rester informé de la vie de l'association.</p>
+-
+-            <p>Pour l'activer, définissez votre mot de passe en cliquant sur le bouton ci-dessous :</p>
+-
+-            <p style="text-align: center;">
+-                <a href="{{ $lienActivation }}" class="bouton">Activer mon espace membre</a>
+-            </p>
+-
+-            <p>Ce lien est valable 7 jours. Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email.</p>
+-        @endif
+-
+-        <p>Solidaires,</p>
+-        <p><strong>Le Bureau Exécutif de l'AJDCB</strong></p>
+-    </div>
+-
+-    <div class="footer">
+-        <p>Association des Jeunes de la Diaspora Congolaise au Bénin (AJDCB)</p>
+-        <p>Cotonou - République du Bénin</p>
+-        <p>Email: contact@ajdcb.org | Tél: +229 01 66 24 62 68</p>
+-    </div>
+-</body>
+-</html>
+diff --git a/resources/views/emails/confirmation-adhesion.blade.php b/resources/views/emails/confirmation-adhesion.blade.php
+deleted file mode 100644
+index 27d44c8..0000000
+--- a/resources/views/emails/confirmation-adhesion.blade.php
++++ /dev/null
+@@ -1,95 +0,0 @@
+-<!DOCTYPE html>
+-<html lang="fr">
+-<head>
+-    <meta charset="UTF-8">
+-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <title>Confirmation demande d'adhésion</title>
+-    <style>
+-        body {
+-            font-family: Arial, sans-serif;
+-            line-height: 1.6;
+-            color: #333;
+-            max-width: 600px;
+-            margin: 0 auto;
+-            padding: 20px;
+-        }
+-        .header {
+-            background-color: #f8f9fa;
+-            padding: 20px;
+-            text-align: center;
+-            border-bottom: 3px solid #17a2b8;
+-        }
+-        .content {
+-            padding: 30px 20px;
+-            background-color: #ffffff;
+-        }
+-        .info-box {
+-            background-color: #f8f9fa;
+-            border-left: 4px solid #17a2b8;
+-            padding: 15px;
+-            margin: 20px 0;
+-        }
+-        .footer {
+-            text-align: center;
+-            padding: 20px;
+-            font-size: 12px;
+-            color: #6c757d;
+-            background-color: #f8f9fa;
+-        }
+-        .etape {
+-            margin: 10px 0;
+-            padding: 10px;
+-            background-color: #e9ecef;
+-            border-radius: 5px;
+-        }
+-    </style>
+-</head>
+-<body>
+-    <div class="header">
+-        <h1>Association des Jeunes de la Diaspora Congolaise au Bénin</h1>
+-        <p style="color: #17a2b8; font-style: italic;">Solidarité - Réflexion - Action</p>
+-    </div>
+-
+-    <div class="content">
+-        <h2>Bonjour {{ $adhesion->prenom }} {{ $adhesion->nom }},</h2>
+-        
+-        <p><strong>Votre demande d'adhésion à l'AJDCB a bien été reçue !</strong></p>
+-
+-        <div class="info-box">
+-            <h3>Récapitulatif de votre demande :</h3>
+-            <p><strong>Nom complet :</strong> {{ $adhesion->prenom }} {{ $adhesion->nom }}</p>
+-            <p><strong>Email :</strong> {{ $adhesion->email }}</p>
+-            <p><strong>Téléphone :</strong> {{ $adhesion->telephone }}</p>
+-            <p><strong>Profession :</strong> {{ $adhesion->profession }}</p>
+-            <p><strong>Ville :</strong> {{ $adhesion->ville }}</p>
+-        </div>
+-
+-        <h3>Prochaines étapes :</h3>
+-        
+-        <div class="etape">
+-            <strong>Étape 1 :</strong> Examen de votre dossier par le Bureau Exécutif
+-        </div>
+-        
+-        <div class="etape">
+-            <strong>Étape 2 :</strong> Vous recevrez une réponse sous 7 à 14 jours
+-        </div>
+-        
+-        <div class="etape">
+-            <strong>Étape 3 :</strong> Si votre candidature est retenue, vous serez invité à une réunion d'intégration
+-        </div>
+-
+-        <p><strong>Numéro de suivi :</strong> AJDCB-{{ $adhesion->id }}-{{ $adhesion->created_at->format('Ymd') }}</p>
+-
+-        <p>Nous vous remercions pour votre intérêt et votre engagement envers la communauté congolaise au Bénin.</p>
+-
+-        <p>Solidaires,</p>
+-        <p><strong>Le Bureau Exécutif de l'AJDCB</strong></p>
+-    </div>
+-
+-    <div class="footer">
+-        <p>Association des Jeunes de la Diaspora Congolaise au Bénin (AJDCB)</p>
+-        <p>Cotonou - République du Bénin</p>
+-        <p>Email: contact@ajdcb.org | Tél: +229 01 66 24 62 68</p>
+-    </div>
+-</body>
+-</html>
+\ No newline at end of file
+diff --git a/resources/views/emails/cotisation-rappel.blade.php b/resources/views/emails/cotisation-rappel.blade.php
+deleted file mode 100644
+index 62bb0db..0000000
+--- a/resources/views/emails/cotisation-rappel.blade.php
++++ /dev/null
+@@ -1,50 +0,0 @@
+-<!DOCTYPE html>
+-<html lang="fr">
+-<head>
+-    <meta charset="UTF-8">
+-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <title>Rappel de cotisation AJDCB</title>
+-    <style>
+-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+-        .header { background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 3px solid #3f794b; }
+-        .content { padding: 30px 20px; background-color: #ffffff; }
+-        .alerte { background-color: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 14px 18px; border-radius: 8px; margin: 20px 0; }
+-        .bouton { display: inline-block; background-color: #3f794b; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 5px; margin: 20px 0; }
+-        .footer { text-align: center; padding: 20px; font-size: 12px; color: #6c757d; background-color: #f8f9fa; }
+-    </style>
+-</head>
+-<body>
+-    <div class="header">
+-        <h1>Association des Jeunes de la Diaspora Congolaise au Bénin</h1>
+-        <p style="color: #3f794b; font-style: italic;">Solidarité - Réflexion - Action</p>
+-    </div>
+-
+-    <div class="content">
+-        <h2>Bonjour {{ $membre->prenom }} {{ $membre->nom }},</h2>
+-
+-        @if($avertissementFinal)
+-            <div class="alerte">
+-                <strong>Dernier avertissement.</strong> Votre cotisation est impayée depuis {{ $moisRetard }} mois consécutifs.
+-                Conformément à l'Article 3 du règlement intérieur, un 3<sup>ème</sup> mois consécutif de non-paiement
+-                entraîne une <strong>radiation automatique</strong> de l'association.
+-            </div>
+-            <p>Pour régulariser votre situation, merci de vous rapprocher du Trésorier ou de payer votre cotisation dès que possible.</p>
+-        @else
+-            <p>
+-                Nous n'avons pas encore reçu votre cotisation mensuelle de {{ $moisRetard }} mois. Un petit rappel amical
+-                avant que ça ne s'accumule !
+-            </p>
+-            <p>La cotisation mensuelle est fixée à 1.000 FCFA (Article 2 du règlement intérieur), à régler auprès du Trésorier.</p>
+-        @endif
+-
+-        <p>Solidaires,</p>
+-        <p><strong>Le Bureau Exécutif de l'AJDCB</strong></p>
+-    </div>
+-
+-    <div class="footer">
+-        <p>Association des Jeunes de la Diaspora Congolaise au Bénin (AJDCB)</p>
+-        <p>Cotonou - République du Bénin</p>
+-        <p>Email: contact@ajdcb.org</p>
+-    </div>
+-</body>
+-</html>
+diff --git a/resources/views/emails/membre-radie.blade.php b/resources/views/emails/membre-radie.blade.php
+deleted file mode 100644
+index 9986847..0000000
+--- a/resources/views/emails/membre-radie.blade.php
++++ /dev/null
+@@ -1,49 +0,0 @@
+-<!DOCTYPE html>
+-<html lang="fr">
+-<head>
+-    <meta charset="UTF-8">
+-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <title>Radiation automatique AJDCB</title>
+-    <style>
+-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+-        .header { background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 3px solid #3f794b; }
+-        .content { padding: 30px 20px; background-color: #ffffff; }
+-        .alerte { background-color: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 14px 18px; border-radius: 8px; margin: 20px 0; }
+-        .footer { text-align: center; padding: 20px; font-size: 12px; color: #6c757d; background-color: #f8f9fa; }
+-    </style>
+-</head>
+-<body>
+-    <div class="header">
+-        <h1>Association des Jeunes de la Diaspora Congolaise au Bénin</h1>
+-        <p style="color: #3f794b; font-style: italic;">Solidarité - Réflexion - Action</p>
+-    </div>
+-
+-    <div class="content">
+-        @if($pourBureau)
+-            <h2>Radiation automatique</h2>
+-            <div class="alerte">
+-                <strong>{{ $membre->prenom }} {{ $membre->nom }}</strong> vient d'être automatiquement radié(e) après
+-                {{ $moisRetard }} mois consécutifs de cotisation impayée (Règlement intérieur, Article 3).
+-            </div>
+-            <p>Le statut de ce membre a été basculé sur « inactif ». Si c'est une erreur (paiement reçu par un autre
+-            canal, par exemple), vous pouvez le réactiver manuellement depuis l'espace admin, page Membres.</p>
+-        @else
+-            <h2>Bonjour {{ $membre->prenom }} {{ $membre->nom }},</h2>
+-            <div class="alerte">
+-                Conformément à l'Article 3 du règlement intérieur, votre qualité de membre de l'AJDCB a été retirée
+-                suite à {{ $moisRetard }} mois consécutifs de cotisation impayée.
+-            </div>
+-            <p>Si vous souhaitez régulariser votre situation et revenir parmi nous, rapprochez-vous du Bureau Exécutif.</p>
+-        @endif
+-
+-        <p>Solidaires,</p>
+-        <p><strong>Le Bureau Exécutif de l'AJDCB</strong></p>
+-    </div>
+-
+-    <div class="footer">
+-        <p>Association des Jeunes de la Diaspora Congolaise au Bénin (AJDCB)</p>
+-        <p>Cotonou - République du Bénin</p>
+-        <p>Email: contact@ajdcb.org</p>
+-    </div>
+-</body>
+-</html>
+diff --git a/resources/views/emails/nouvelle-adhesion.blade.php b/resources/views/emails/nouvelle-adhesion.blade.php
+deleted file mode 100644
+index 470e2e7..0000000
+--- a/resources/views/emails/nouvelle-adhesion.blade.php
++++ /dev/null
+@@ -1,199 +0,0 @@
+-{{-- resources/views/emails/nouvelle-adhesion.blade.php --}}
+-<!DOCTYPE html>
+-<html lang="fr">
+-<head>
+-    <meta charset="UTF-8">
+-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <title>Nouvelle demande d'adhésion</title>
+-    <style>
+-        body {
+-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+-            line-height: 1.6;
+-            color: #333;
+-            margin: 0;
+-            padding: 0;
+-            background-color: #f4f4f7;
+-        }
+-        .container {
+-            max-width: 600px;
+-            margin: 20px auto;
+-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+-            border-radius: 20px;
+-            padding: 3px;
+-        }
+-        .content {
+-            background-color: white;
+-            border-radius: 18px;
+-            padding: 40px 30px;
+-        }
+-        .header {
+-            text-align: center;
+-            margin-bottom: 30px;
+-        }
+-        .logo {
+-            width: 80px;
+-            height: 80px;
+-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+-            border-radius: 50%;
+-            margin: 0 auto 20px;
+-            display: flex;
+-            align-items: center;
+-            justify-content: center;
+-        }
+-        .logo span {
+-            color: white;
+-            font-size: 40px;
+-            font-weight: bold;
+-        }
+-        h1 {
+-            color: #333;
+-            font-size: 28px;
+-            margin-bottom: 10px;
+-        }
+-        .badge {
+-            display: inline-block;
+-            background: #fef3c7;
+-            color: #d97706;
+-            padding: 8px 16px;
+-            border-radius: 50px;
+-            font-size: 14px;
+-            font-weight: bold;
+-            margin-bottom: 20px;
+-        }
+-        .info-card {
+-            background: #f8fafc;
+-            border-radius: 15px;
+-            padding: 25px;
+-            margin-bottom: 25px;
+-            border: 1px solid #e2e8f0;
+-        }
+-        .info-row {
+-            display: flex;
+-            margin-bottom: 15px;
+-            padding-bottom: 15px;
+-            border-bottom: 1px solid #e2e8f0;
+-        }
+-        .info-row:last-child {
+-            border-bottom: none;
+-            margin-bottom: 0;
+-            padding-bottom: 0;
+-        }
+-        .info-label {
+-            width: 120px;
+-            font-weight: 600;
+-            color: #64748b;
+-        }
+-        .info-value {
+-            flex: 1;
+-            color: #1e293b;
+-        }
+-        .button {
+-            display: inline-block;
+-            padding: 15px 30px;
+-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+-            color: white;
+-            text-decoration: none;
+-            border-radius: 10px;
+-            font-weight: bold;
+-            margin: 10px 5px;
+-            transition: transform 0.2s;
+-        }
+-        .button:hover {
+-            transform: translateY(-2px);
+-        }
+-        .button-secondary {
+-            background: white;
+-            color: #667eea;
+-            border: 2px solid #667eea;
+-        }
+-        .footer {
+-            text-align: center;
+-            margin-top: 30px;
+-            padding-top: 20px;
+-            border-top: 2px solid #e2e8f0;
+-            color: #64748b;
+-        }
+-        .highlight {
+-            background: #fef3c7;
+-            padding: 2px 8px;
+-            border-radius: 5px;
+-            font-weight: bold;
+-        }
+-    </style>
+-</head>
+-<body>
+-    <div class="container">
+-        <div class="content">
+-            <div class="header">
+-                <div class="logo">
+-                    <span>AJ</span>
+-                </div>
+-                <h1>✨ Nouvelle demande d'adhésion</h1>
+-                <div class="badge">
+-                    ⏳ En attente de traitement
+-                </div>
+-            </div>
+-
+-            <p style="font-size: 18px; margin-bottom: 25px; text-align: center;">
+-                Une nouvelle personne souhaite rejoindre l'association 
+-                <strong class="highlight">AJDCB</strong>
+-            </p>
+-
+-            <div class="info-card">
+-                <h3 style="margin-top: 0; margin-bottom: 20px; color: #333;">
+-                    📋 Informations du demandeur
+-                </h3>
+-                
+-                <div class="info-row">
+-                    <span class="info-label">Nom complet</span>
+-                    <span class="info-value"><strong>{{ $prenom }} {{ $nom }}</strong></span>
+-                </div>
+-                
+-                <div class="info-row">
+-                    <span class="info-label">Email</span>
+-                    <span class="info-value">{{ $email }}</span>
+-                </div>
+-                
+-                <div class="info-row">
+-                    <span class="info-label">Téléphone</span>
+-                    <span class="info-value">{{ $telephone }}</span>
+-                </div>
+-                
+-                <div class="info-row">
+-                    <span class="info-label">Ville</span>
+-                    <span class="info-value">{{ $ville }}</span>
+-                </div>
+-                
+-                <div class="info-row">
+-                    <span class="info-label">Date</span>
+-                    <span class="info-value">{{ now()->format('d/m/Y H:i') }}</span>
+-                </div>
+-            </div>
+-
+-            <div style="text-align: center; margin: 30px 0;">
+-                <a href="{{ $dashboardUrl }}" class="button">
+-                    👁️ Voir la demande complète
+-                </a>
+-                
+-                <a href="{{ $listeUrl }}" class="button button-secondary">
+-                    📋 Gérer toutes les demandes
+-                </a>
+-            </div>
+-
+-            <div style="background: #f0f9ff; border-radius: 10px; padding: 20px; margin: 20px 0;">
+-                <p style="margin: 0; color: #0369a1;">
+-                    <strong>ℹ️ Action requise :</strong><br>
+-                    Cette demande est en attente de traitement. Veuillez l'examiner et prendre une décision dans les plus brefs délais.
+-                </p>
+-            </div>
+-
+-            <div class="footer">
+-                <p style="margin: 0;">
+-                    Cet email a été envoyé automatiquement suite à une nouvelle demande d'adhésion.<br>
+-                    © {{ date('Y') }} AJDCB - Tous droits réservés
+-                </p>
+-            </div>
+-        </div>
+-    </div>
+-</body>
+-</html>
+\ No newline at end of file
 diff --git a/routes/api.php b/routes/api.php
-index 8c3f52f..69f5554 100644
+index 274b6b4..b6116b9 100644
 --- a/routes/api.php
 +++ b/routes/api.php
-@@ -4,9 +4,7 @@
- use App\Http\Controllers\API\MessageController;
- use App\Http\Controllers\API\ActionController;
- use App\Http\Controllers\API\ActualiteController;
--use App\Http\Controllers\API\AdhesionController;
- use App\Http\Controllers\API\MembreController;
--use App\Http\Controllers\API\CotisationController;
- use App\Http\Controllers\API\AuthController;
- use App\Http\Controllers\API\MembreAuthController;
- use App\Http\Controllers\API\MembreEspaceController;
-@@ -57,9 +55,6 @@
-     // Voir un message spécifique (PUBLIC si vous voulez)
-     Route::get('/messages/{id}', [MessageController::class, 'show']);
-     
--    // Adhésions - Créer une demande (PUBLIC)
--    Route::post('/adhesions', [AdhesionController::class, 'store']);
--    
-     // Actualités - Routes publiques
-     Route::get('/actualites', [ActualiteController::class, 'index']);
-     Route::get('/actualites/type/{type}', [ActualiteController::class, 'getByType']);
-@@ -99,17 +94,13 @@
-     // Statistiques publiques - Chiffres clés réels pour la page d'accueil
-     Route::get('/statistiques-publiques', [StatistiquesPubliquesController::class, 'index']);
+@@ -2,16 +2,10 @@
  
--    // Paiements FedaPay - Routes publiques (un visiteur ou un membre paie sans être connecté)
--    Route::post('/paiements/cotisation', [PaiementController::class, 'initierCotisation']);
-+    // Paiements FedaPay - Route publique (un visiteur ou un membre paie sans être connecté)
-     Route::post('/paiements/evenements/{id}', [PaiementController::class, 'initierEvenement']);
+ use Illuminate\Support\Facades\Route;
+ use App\Http\Controllers\API\MessageController;
+-use App\Http\Controllers\API\ActionController;
+ use App\Http\Controllers\API\ActualiteController;
+-use App\Http\Controllers\API\MembreController;
+ use App\Http\Controllers\API\AuthController;
+-use App\Http\Controllers\API\MembreAuthController;
+-use App\Http\Controllers\API\MembreEspaceController;
+-use App\Http\Controllers\API\EvenementController;
+ use App\Http\Controllers\API\GuideController;
+ use App\Http\Controllers\API\PartenaireController;
+-use App\Http\Controllers\API\PaiementController;
+ use App\Http\Controllers\API\NewsletterController;
+ use App\Http\Controllers\API\StatistiquesPubliquesController;
+ use App\Http\Controllers\API\CartePubliqueController;
+@@ -31,7 +25,7 @@
+ Route::get('/test', function() {
+     return response()->json([
+         'success' => true,
+-        'message' => 'API AJDCB fonctionne correctement',
++        'message' => 'API Consulat fonctionne correctement',
+         'version' => '1.0.0',
+         'timestamp' => now()->toDateTimeString()
+     ]);
+@@ -44,13 +38,6 @@
+     Route::post('/mot-de-passe-oublie', [AuthController::class, 'motDePasseOublie']);
  });
  
- // Webhook FedaPay (PUBLIC — appelé par les serveurs FedaPay, pas par le navigateur)
- Route::post('/v1/paiements/webhook', [PaiementController::class, 'webhook']);
- 
--// Détail d'une adhésion (PUBLIC — ex : page de suivi de candidature par lien direct)
--Route::get('/adhesions/{id}/details', [AdhesionController::class, 'show']);
+-// Auth (espace membre) — distinct de l'espace admin ci-dessus
+-Route::prefix('v1/membre/auth')->group(function () {
+-    Route::post('/activer-compte', [MembreAuthController::class, 'activerCompte']);
+-    Route::post('/login', [MembreAuthController::class, 'login']);
+-    Route::post('/mot-de-passe-oublie', [MembreAuthController::class, 'motDePasseOublie']);
+-});
 -
+ // Messages - Routes publiques (création et consultation publique)
+ Route::prefix('v1')->group(function () {
+     // Créer un message (PUBLIC)
+@@ -64,24 +51,12 @@
+     Route::get('/actualites/type/{type}', [ActualiteController::class, 'getByType']);
+     Route::get('/actualites/dernieres', [ActualiteController::class, 'dernieresActualites']);
+     Route::get('/actualites/{id}', [ActualiteController::class, 'show']);
+-    
+-    // Actions - Routes publiques (consultation)
+-    Route::get('/actions', [ActionController::class, 'index']);
+-    Route::get('/actions/section/{section}', [ActionController::class, 'getBySection']);
+-    Route::get('/actions/{id}', [ActionController::class, 'show']);
+-    
+-    // Membres - Routes publiques
+-    Route::get('/membres', [MembreController::class, 'index']);
+-    Route::get('/membres/bureau', [MembreController::class, 'bureau']);
+-    Route::get('/membres/commissions', [MembreController::class, 'commissions']);
+-    Route::get('/membres/commission/{nom}', [MembreController::class, 'commission']);
+-    Route::get('/membres/postes-bureau', [MembreController::class, 'postesBureau']);
+-    Route::get('/membres/villes', [MembreController::class, 'villes']);
+-    Route::get('/membres/{id}', [MembreController::class, 'show']);
+ 
+-    // Événements - Routes publiques (consultation)
+-    Route::get('/evenements', [EvenementController::class, 'index']);
+-    Route::get('/evenements/{id}', [EvenementController::class, 'show']);
++    // NOTE : pas de routes /evenements séparées. L'Agenda (V1) affiche les
++    // Actualités de type "evenement" (voir ActualiteController::getByType) —
++    // la table `evenements` (calendrier avec inscription/billetterie) était
++    // une fonctionnalité V2 jamais branchée à un vrai flux d'inscription ;
++    // retirée avec son admin.
+ 
+     // Guide - Routes publiques (arborescence sections > sous-sections > documents)
+     Route::get('/guide', [GuideController::class, 'index']);
+@@ -100,13 +75,15 @@
+ 
+     // Carte interactive - Vue publique (agrégation par ville uniquement)
+     Route::get('/carte', [CartePubliqueController::class, 'index']);
+-
+-    // Paiements FedaPay - Route publique (un visiteur ou un membre paie sans être connecté)
+-    Route::post('/paiements/evenements/{id}', [PaiementController::class, 'initierEvenement']);
+ });
+ 
+-// Webhook FedaPay (PUBLIC — appelé par les serveurs FedaPay, pas par le navigateur)
+-Route::post('/v1/paiements/webhook', [PaiementController::class, 'webhook']);
++// NOTE : le paiement FedaPay des billets d'événement (AJDCB) et son webhook
++// ont été retirés avec PaiementController — cassés (référençaient Membre et
++// Cotisation, supprimés) et hors périmètre V1 (l'Agenda est une simple liste
++// en V1, sans inscription ni billetterie — cf. document du projet, V2 pour
++// le calendrier avec inscription). Le webhook FedaPay sera reconstruit pour
++// le paiement en ligne des demandes consulaires (voir Paiement::CANAUX,
++// FedaPayService, déjà prêts côté modèle).
+ 
  // Routes pour les images (PUBLIQUES - sans authentification)
  Route::prefix('images')->group(function () {
-     Route::get('/{type}/{filename}', [ImageController::class, 'show']);
-@@ -169,40 +160,6 @@
+@@ -115,7 +92,7 @@
+ });
+ 
+ // ==================== ROUTES PROTÉGÉES (NÉCESSITENT AUTH) ====================
+-// Rôles disponibles : super_admin, admin, moderateur (voir AuthController::getPermissionsByRole)
++// Rôles disponibles : super_admin, admin, agent (voir User::ROLES)
+ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
+ 
+     // Auth supplémentaires
+@@ -142,54 +119,20 @@
+     });
+ 
+     // ========== ACTUALITÉS ==========
+-    // Lecture : les 3 rôles. Créer : moderateur/admin/super_admin. Modifier : admin/super_admin.
++    // Lecture : les 3 rôles. Créer : admin/super_admin. Modifier : admin/super_admin.
+     // Supprimer : super_admin uniquement.
+     Route::prefix('actualites')->group(function () {
+         Route::get('/statistiques', [ActualiteController::class, 'statistiques']);
+         Route::post('/', [ActualiteController::class, 'store'])
+-            ->middleware('role:super_admin,admin,moderateur');
++            ->middleware('role:super_admin,admin');
+         Route::put('/{id}', [ActualiteController::class, 'update'])
+             ->middleware('role:super_admin,admin');
+         Route::delete('/{id}', [ActualiteController::class, 'destroy'])
              ->middleware('role:super_admin');
      });
  
--    // ========== ADHÉSIONS ==========
--    // Lecture : les 3 rôles. Traiter (approuver/rejeter) : admin/super_admin.
+-    // ========== ACTIONS ==========
+-    // Lecture : les 3 rôles (déjà publique). Créer/modifier : admin/super_admin.
 -    // Supprimer : super_admin uniquement.
--    Route::prefix('adhesions')->group(function () {
--        Route::get('/statistiques', [AdhesionController::class, 'statistiques']);
--        Route::get('/', [AdhesionController::class, 'index']);
--        Route::get('/{id}', [AdhesionController::class, 'show']);
--        Route::put('/{id}/traiter', [AdhesionController::class, 'traiter'])
+-    Route::prefix('actions')->group(function () {
+-        Route::get('/statistiques', [ActionController::class, 'statistiques']);
+-        Route::post('/', [ActionController::class, 'store'])
 -            ->middleware('role:super_admin,admin');
--        Route::delete('/{id}', [AdhesionController::class, 'destroy'])
+-        Route::post('/{id}', [ActionController::class, 'update'])
+-            ->middleware('role:super_admin,admin');
+-        Route::delete('/{id}', [ActionController::class, 'destroy'])
 -            ->middleware('role:super_admin');
 -    });
 -
--    // ========== COTISATIONS ==========
--    // Données financières internes : lecture réservée aux comptes admin (pas de route publique).
--    // Marquer payé/impayé : admin/super_admin uniquement.
--    Route::prefix('cotisations')->group(function () {
--        // Lecture : restreint aux rôles ayant besoin de voir les données financières
--        // (jusqu'ici ouvert à tout compte admin authentifié, y compris moderateur —
--        // corrigé ici en même temps que l'ajout du rôle tresorier).
--        Route::get('/', [CotisationController::class, 'index'])
--            ->middleware('role:super_admin,admin,tresorier');
--        Route::get('/statistiques', [CotisationController::class, 'statistiques'])
--            ->middleware('role:super_admin,admin,tresorier');
--        Route::get('/export', [CotisationController::class, 'export'])
--            ->middleware('role:super_admin,admin,tresorier');
--        Route::get('/membre/{id}', [CotisationController::class, 'historiqueMembre'])
--            ->middleware('role:super_admin,admin,tresorier');
--        Route::post('/marquer', [CotisationController::class, 'marquer'])
--            ->middleware('role:super_admin,admin,tresorier');
--        Route::post('/verifier-retards', [CotisationController::class, 'verifierRetards'])
--            ->middleware('role:super_admin,tresorier');
+-    // ========== MEMBRES ==========
+-    // Lecture de TOUS les membres (actifs + inactifs), réservé à l'espace admin.
+-    Route::get('/membres-admin/tous', [MembreController::class, 'tous']);
+-    Route::get('/membres-admin/export', [MembreController::class, 'export']);
+-
+-    // Lecture (bureau, commissions, etc.) : déjà publique. Créer/modifier : admin/super_admin.
+-    // Supprimer : super_admin uniquement.
+-    Route::prefix('membres')->group(function () {
+-        Route::post('/', [MembreController::class, 'store'])
+-            ->middleware('role:super_admin,admin');
+-        Route::put('/{id}', [MembreController::class, 'update'])
+-            ->middleware('role:super_admin,admin');
+-        Route::delete('/{id}', [MembreController::class, 'destroy'])
+-            ->middleware('role:super_admin');
+-        // Créer un accès admin depuis une fiche membre du bureau (voir
+-        // Membre::POSTES_ADMIN_ELIGIBLES) — création de comptes, réservé au super_admin.
+-        Route::post('/{id}/creer-acces-admin', [MembreController::class, 'creerAccesAdmin'])
+-            ->middleware('role:super_admin');
 -    });
 -
-     // ========== MEMBRES ==========
-     // Lecture de TOUS les membres (actifs + inactifs), réservé à l'espace admin.
-     Route::get('/membres-admin/tous', [MembreController::class, 'tous']);
-@@ -317,7 +274,6 @@
+     // ========== UTILISATEURS (comptes admin) ==========
+-    // Gestion des comptes déjà créés (via creer-acces-admin ou à la main) :
+-    // liste, changement de rôle/statut, suppression, renvoi d'activation.
++    // Liste, changement de rôle/statut, suppression, renvoi d'activation.
+     // Réservé au super_admin — ce sont des identifiants de connexion.
+     Route::prefix('utilisateurs')->middleware('role:super_admin')->group(function () {
+         Route::get('/', [UtilisateurController::class, 'index']);
+@@ -199,24 +142,11 @@
      });
  
-     Route::put('/profil', [MembreEspaceController::class, 'updateProfil']);
--    Route::get('/mes-cotisations', [CotisationController::class, 'mesCotisations']);
-     Route::get('/evenements', [MembreEspaceController::class, 'evenements']);
-     Route::post('/evenements/{id}/inscription', [MembreEspaceController::class, 'inscrire']);
-     Route::delete('/evenements/{id}/inscription', [MembreEspaceController::class, 'desinscrire']);
-diff --git a/routes/console.php b/routes/console.php
-index 1b7cf60..3c9adf1 100644
---- a/routes/console.php
-+++ b/routes/console.php
-@@ -2,17 +2,7 @@
+     // ========== JOURNAL D'ACTIVITÉ ==========
+-    // Historique des actions sensibles (cotisations, membres, comptes admin,
+-    // adhésions). Réservé au super_admin.
++    // Historique des actions sensibles (demandes, ressortissants, comptes
++    // admin). Réservé au super_admin.
+     Route::get('/journal-activite', [JournalActiviteController::class, 'index'])
+         ->middleware('role:super_admin');
  
- use Illuminate\Foundation\Inspiring;
- use Illuminate\Support\Facades\Artisan;
--use Illuminate\Support\Facades\Schedule;
- 
- Artisan::command('inspire', function () {
-     $this->comment(Inspiring::quote());
- })->purpose('Display an inspiring quote');
+-    // ========== ÉVÉNEMENTS ==========
+-    // Lecture : déjà publique. Créer/modifier : admin/super_admin. Supprimer : super_admin uniquement.
+-    Route::prefix('evenements')->group(function () {
+-        Route::get('/statistiques', [EvenementController::class, 'statistiques'])
+-            ->middleware('role:super_admin,admin');
+-        Route::post('/', [EvenementController::class, 'store'])
+-            ->middleware('role:super_admin,admin');
+-        Route::put('/{id}', [EvenementController::class, 'update'])
+-            ->middleware('role:super_admin,admin');
+-        Route::delete('/{id}', [EvenementController::class, 'destroy'])
+-            ->middleware('role:super_admin');
+-    });
 -
--// Le 11 de chaque mois à 8h (lendemain de la date limite de paiement,
--// Article 2 du règlement intérieur) : rappels, avertissements, et radiation
--// automatique après 3 mois consécutifs d'impayé (Article 3).
--// Nécessite que le cron du serveur appelle `php artisan schedule:run`
--// chaque minute (crontab : * * * * * cd /chemin/du/projet && php artisan schedule:run >> /dev/null 2>&1)
--Schedule::command('cotisations:verifier-retards')
--    ->monthlyOn(11, '08:00')
--    ->onOneServer();
+     // ========== GUIDE ==========
+     // Lecture : déjà publique (y compris brouillons via ?all=1, réservé à l'admin
+     // côté frontend). Créer/modifier/supprimer : admin/super_admin pour tout niveau
+@@ -269,22 +199,7 @@
+     });
+ });
+ 
+-// ==================== ROUTES PROTÉGÉES — ESPACE MEMBRE ====================
+-// Séparées des routes admin ci-dessus : un token Membre ne peut pas accéder
+-// aux routes admin (elles vérifient $user->role, absent sur Membre), et le
+-// middleware 'membre' bloque symétriquement un token admin ici.
+-Route::middleware(['auth:sanctum', 'membre'])->prefix('v1/membre')->group(function () {
+-    Route::prefix('auth')->group(function () {
+-        Route::post('/logout', [MembreAuthController::class, 'logout']);
+-        Route::get('/me', [MembreAuthController::class, 'me']);
+-        Route::post('/change-password', [MembreAuthController::class, 'changePassword']);
+-    });
+-
+-    Route::put('/profil', [MembreEspaceController::class, 'updateProfil']);
+-    Route::get('/evenements', [MembreEspaceController::class, 'evenements']);
+-    Route::post('/evenements/{id}/inscription', [MembreEspaceController::class, 'inscrire']);
+-    Route::delete('/evenements/{id}/inscription', [MembreEspaceController::class, 'desinscrire']);
+-});
++// ==================== ESPACE MEMBRE (RESSORTISSANT) ====================
+ 
+ Route::prefix('v1/ressortissant/auth')->group(function () {
+     Route::post('/inscrire', [RessortissantAuthController::class, 'inscrire']);
+@@ -335,4 +250,4 @@
+ Route::middleware(['auth:sanctum', 'role:super_admin,admin'])->prefix('v1/admin')->group(function () {
+     Route::apiResource('tarifs', TarifController::class)->only(['index', 'store', 'update', 'destroy']);
+     Route::apiResource('document-types-requis', DocumentTypeRequisController::class)->only(['index', 'store', 'update', 'destroy']);
+-});
+\ No newline at end of file
++});

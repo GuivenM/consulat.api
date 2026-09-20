@@ -19,7 +19,6 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin' => \App\Http\Middleware\AdminMiddleware::class,
             'role' => \App\Http\Middleware\CheckRole::class,
-            'membre' => \App\Http\Middleware\EnsureIsMembre::class,
         ]);
 
         // Résout l'entité (consulat/ambassade) courante en tout début de

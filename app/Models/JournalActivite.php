@@ -35,7 +35,7 @@ class JournalActivite extends Model
      *
      * @param string $action Identifiant court, ex. 'membre.supprimer'
      * @param string $description Résumé lisible, déjà formaté
-     * @param Model|null $sujet Le modèle concerné (Membre, User, Demande...)
+     * @param Model|null $sujet Le modèle concerné (Ressortissant, User, Demande...)
      * @param array $donnees Contexte structuré additionnel, optionnel
      */
     public static function enregistrer(string $action, string $description, ?Model $sujet = null, array $donnees = []): void

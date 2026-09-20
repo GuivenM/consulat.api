@@ -2,16 +2,10 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\MessageController;
-use App\Http\Controllers\API\ActionController;
 use App\Http\Controllers\API\ActualiteController;
-use App\Http\Controllers\API\MembreController;
 use App\Http\Controllers\API\AuthController;
-use App\Http\Controllers\API\MembreAuthController;
-use App\Http\Controllers\API\MembreEspaceController;
-use App\Http\Controllers\API\EvenementController;
 use App\Http\Controllers\API\GuideController;
 use App\Http\Controllers\API\PartenaireController;
-use App\Http\Controllers\API\PaiementController;
 use App\Http\Controllers\API\NewsletterController;
 use App\Http\Controllers\API\StatistiquesPubliquesController;
 use App\Http\Controllers\API\CartePubliqueController;
@@ -31,7 +25,7 @@ use App\Http\Controllers\API\DocumentTypeRequisController;
 Route::get('/test', function() {
     return response()->json([
         'success' => true,
-        'message' => 'API AJDCB fonctionne correctement',
+        'message' => 'API Consulat fonctionne correctement',
         'version' => '1.0.0',
         'timestamp' => now()->toDateTimeString()
     ]);
@@ -42,13 +36,6 @@ Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/activer-compte-admin', [AuthController::class, 'activerCompteAdmin']);
     Route::post('/mot-de-passe-oublie', [AuthController::class, 'motDePasseOublie']);
-});
-
-// Auth (espace membre) — distinct de l'espace admin ci-dessus
-Route::prefix('v1/membre/auth')->group(function () {
-    Route::post('/activer-compte', [MembreAuthController::class, 'activerCompte']);
-    Route::post('/login', [MembreAuthController::class, 'login']);
-    Route::post('/mot-de-passe-oublie', [MembreAuthController::class, 'motDePasseOublie']);
 });
 
 // Messages - Routes publiques (création et consultation publique)
@@ -64,24 +51,12 @@ Route::prefix('v1')->group(function () {
     Route::get('/actualites/type/{type}', [ActualiteController::class, 'getByType']);
     Route::get('/actualites/dernieres', [ActualiteController::class, 'dernieresActualites']);
     Route::get('/actualites/{id}', [ActualiteController::class, 'show']);
-    
-    // Actions - Routes publiques (consultation)
-    Route::get('/actions', [ActionController::class, 'index']);
-    Route::get('/actions/section/{section}', [ActionController::class, 'getBySection']);
-    Route::get('/actions/{id}', [ActionController::class, 'show']);
-    
-    // Membres - Routes publiques
-    Route::get('/membres', [MembreController::class, 'index']);
-    Route::get('/membres/bureau', [MembreController::class, 'bureau']);
-    Route::get('/membres/commissions', [MembreController::class, 'commissions']);
-    Route::get('/membres/commission/{nom}', [MembreController::class, 'commission']);
-    Route::get('/membres/postes-bureau', [MembreController::class, 'postesBureau']);
-    Route::get('/membres/villes', [MembreController::class, 'villes']);
-    Route::get('/membres/{id}', [MembreController::class, 'show']);
 
-    // Événements - Routes publiques (consultation)
-    Route::get('/evenements', [EvenementController::class, 'index']);
-    Route::get('/evenements/{id}', [EvenementController::class, 'show']);
+    // NOTE : pas de routes /evenements séparées. L'Agenda (V1) affiche les
+    // Actualités de type "evenement" (voir ActualiteController::getByType) —
+    // la table `evenements` (calendrier avec inscription/billetterie) était
+    // une fonctionnalité V2 jamais branchée à un vrai flux d'inscription ;
+    // retirée avec son admin.
 
     // Guide - Routes publiques (arborescence sections > sous-sections > documents)
     Route::get('/guide', [GuideController::class, 'index']);
@@ -100,13 +75,15 @@ Route::prefix('v1')->group(function () {
 
     // Carte interactive - Vue publique (agrégation par ville uniquement)
     Route::get('/carte', [CartePubliqueController::class, 'index']);
-
-    // Paiements FedaPay - Route publique (un visiteur ou un membre paie sans être connecté)
-    Route::post('/paiements/evenements/{id}', [PaiementController::class, 'initierEvenement']);
 });
 
-// Webhook FedaPay (PUBLIC — appelé par les serveurs FedaPay, pas par le navigateur)
-Route::post('/v1/paiements/webhook', [PaiementController::class, 'webhook']);
+// NOTE : le paiement FedaPay des billets d'événement (AJDCB) et son webhook
+// ont été retirés avec PaiementController — cassés (référençaient Membre et
+// Cotisation, supprimés) et hors périmètre V1 (l'Agenda est une simple liste
+// en V1, sans inscription ni billetterie — cf. document du projet, V2 pour
+// le calendrier avec inscription). Le webhook FedaPay sera reconstruit pour
+// le paiement en ligne des demandes consulaires (voir Paiement::CANAUX,
+// FedaPayService, déjà prêts côté modèle).
 
 // Routes pour les images (PUBLIQUES - sans authentification)
 Route::prefix('images')->group(function () {
@@ -115,7 +92,7 @@ Route::prefix('images')->group(function () {
 });
 
 // ==================== ROUTES PROTÉGÉES (NÉCESSITENT AUTH) ====================
-// Rôles disponibles : super_admin, admin, moderateur (voir AuthController::getPermissionsByRole)
+// Rôles disponibles : super_admin, admin, agent (voir User::ROLES)
 Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
 
     // Auth supplémentaires
@@ -142,54 +119,20 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
     });
 
     // ========== ACTUALITÉS ==========
-    // Lecture : les 3 rôles. Créer : moderateur/admin/super_admin. Modifier : admin/super_admin.
+    // Lecture : les 3 rôles. Créer : admin/super_admin. Modifier : admin/super_admin.
     // Supprimer : super_admin uniquement.
     Route::prefix('actualites')->group(function () {
         Route::get('/statistiques', [ActualiteController::class, 'statistiques']);
         Route::post('/', [ActualiteController::class, 'store'])
-            ->middleware('role:super_admin,admin,moderateur');
+            ->middleware('role:super_admin,admin');
         Route::put('/{id}', [ActualiteController::class, 'update'])
             ->middleware('role:super_admin,admin');
         Route::delete('/{id}', [ActualiteController::class, 'destroy'])
             ->middleware('role:super_admin');
     });
 
-    // ========== ACTIONS ==========
-    // Lecture : les 3 rôles (déjà publique). Créer/modifier : admin/super_admin.
-    // Supprimer : super_admin uniquement.
-    Route::prefix('actions')->group(function () {
-        Route::get('/statistiques', [ActionController::class, 'statistiques']);
-        Route::post('/', [ActionController::class, 'store'])
-            ->middleware('role:super_admin,admin');
-        Route::post('/{id}', [ActionController::class, 'update'])
-            ->middleware('role:super_admin,admin');
-        Route::delete('/{id}', [ActionController::class, 'destroy'])
-            ->middleware('role:super_admin');
-    });
-
-    // ========== MEMBRES ==========
-    // Lecture de TOUS les membres (actifs + inactifs), réservé à l'espace admin.
-    Route::get('/membres-admin/tous', [MembreController::class, 'tous']);
-    Route::get('/membres-admin/export', [MembreController::class, 'export']);
-
-    // Lecture (bureau, commissions, etc.) : déjà publique. Créer/modifier : admin/super_admin.
-    // Supprimer : super_admin uniquement.
-    Route::prefix('membres')->group(function () {
-        Route::post('/', [MembreController::class, 'store'])
-            ->middleware('role:super_admin,admin');
-        Route::put('/{id}', [MembreController::class, 'update'])
-            ->middleware('role:super_admin,admin');
-        Route::delete('/{id}', [MembreController::class, 'destroy'])
-            ->middleware('role:super_admin');
-        // Créer un accès admin depuis une fiche membre du bureau (voir
-        // Membre::POSTES_ADMIN_ELIGIBLES) — création de comptes, réservé au super_admin.
-        Route::post('/{id}/creer-acces-admin', [MembreController::class, 'creerAccesAdmin'])
-            ->middleware('role:super_admin');
-    });
-
     // ========== UTILISATEURS (comptes admin) ==========
-    // Gestion des comptes déjà créés (via creer-acces-admin ou à la main) :
-    // liste, changement de rôle/statut, suppression, renvoi d'activation.
+    // Liste, changement de rôle/statut, suppression, renvoi d'activation.
     // Réservé au super_admin — ce sont des identifiants de connexion.
     Route::prefix('utilisateurs')->middleware('role:super_admin')->group(function () {
         Route::get('/', [UtilisateurController::class, 'index']);
@@ -199,23 +142,10 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
     });
 
     // ========== JOURNAL D'ACTIVITÉ ==========
-    // Historique des actions sensibles (cotisations, membres, comptes admin,
-    // adhésions). Réservé au super_admin.
+    // Historique des actions sensibles (demandes, ressortissants, comptes
+    // admin). Réservé au super_admin.
     Route::get('/journal-activite', [JournalActiviteController::class, 'index'])
         ->middleware('role:super_admin');
-
-    // ========== ÉVÉNEMENTS ==========
-    // Lecture : déjà publique. Créer/modifier : admin/super_admin. Supprimer : super_admin uniquement.
-    Route::prefix('evenements')->group(function () {
-        Route::get('/statistiques', [EvenementController::class, 'statistiques'])
-            ->middleware('role:super_admin,admin');
-        Route::post('/', [EvenementController::class, 'store'])
-            ->middleware('role:super_admin,admin');
-        Route::put('/{id}', [EvenementController::class, 'update'])
-            ->middleware('role:super_admin,admin');
-        Route::delete('/{id}', [EvenementController::class, 'destroy'])
-            ->middleware('role:super_admin');
-    });
 
     // ========== GUIDE ==========
     // Lecture : déjà publique (y compris brouillons via ?all=1, réservé à l'admin
@@ -269,22 +199,7 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
     });
 });
 
-// ==================== ROUTES PROTÉGÉES — ESPACE MEMBRE ====================
-// Séparées des routes admin ci-dessus : un token Membre ne peut pas accéder
-// aux routes admin (elles vérifient $user->role, absent sur Membre), et le
-// middleware 'membre' bloque symétriquement un token admin ici.
-Route::middleware(['auth:sanctum', 'membre'])->prefix('v1/membre')->group(function () {
-    Route::prefix('auth')->group(function () {
-        Route::post('/logout', [MembreAuthController::class, 'logout']);
-        Route::get('/me', [MembreAuthController::class, 'me']);
-        Route::post('/change-password', [MembreAuthController::class, 'changePassword']);
-    });
-
-    Route::put('/profil', [MembreEspaceController::class, 'updateProfil']);
-    Route::get('/evenements', [MembreEspaceController::class, 'evenements']);
-    Route::post('/evenements/{id}/inscription', [MembreEspaceController::class, 'inscrire']);
-    Route::delete('/evenements/{id}/inscription', [MembreEspaceController::class, 'desinscrire']);
-});
+// ==================== ESPACE MEMBRE (RESSORTISSANT) ====================
 
 Route::prefix('v1/ressortissant/auth')->group(function () {
     Route::post('/inscrire', [RessortissantAuthController::class, 'inscrire']);

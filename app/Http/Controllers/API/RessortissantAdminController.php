@@ -222,7 +222,6 @@ class RessortissantAdminController extends Controller
                 'numero_piece' => $r->numero_piece,
                 'date_expiration_piece' => $r->date_expiration_piece?->format('d/m/Y'),
                 'adresse' => $r->adresse,
-                'commune' => $r->commune,
                 'latitude' => $r->latitude,
                 'longitude' => $r->longitude,
                 'date_arrivee' => $r->date_arrivee?->format('d/m/Y'),
