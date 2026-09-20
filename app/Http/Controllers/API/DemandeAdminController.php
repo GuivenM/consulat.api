@@ -50,11 +50,13 @@ class DemandeAdminController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $demandes->through(fn (Demande $d) => $this->formaterDemande($d))->items(),
-            'meta' => [
-                'total' => $demandes->total(),
-                'page' => $demandes->currentPage(),
-                'dernier_page' => $demandes->lastPage(),
+            'data' => [
+                'items' => $demandes->through(fn (Demande $d) => $this->formaterDemande($d))->items(),
+                'meta' => [
+                    'total' => $demandes->total(),
+                    'current_page' => $demandes->currentPage(),
+                    'last_page' => $demandes->lastPage(),
+                ],
             ],
         ]);
     }

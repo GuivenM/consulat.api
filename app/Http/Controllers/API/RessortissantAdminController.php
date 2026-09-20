@@ -45,11 +45,13 @@ class RessortissantAdminController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $ressortissants->through(fn (Ressortissant $r) => $this->formater($r))->items(),
-            'meta' => [
-                'total' => $ressortissants->total(),
-                'page' => $ressortissants->currentPage(),
-                'dernier_page' => $ressortissants->lastPage(),
+            'data' => [
+                'items' => $ressortissants->through(fn (Ressortissant $r) => $this->formater($r))->items(),
+                'meta' => [
+                    'total' => $ressortissants->total(),
+                    'current_page' => $ressortissants->currentPage(),
+                    'last_page' => $ressortissants->lastPage(),
+                ],
             ],
         ]);
     }
