@@ -240,6 +240,7 @@ Route::prefix('v1/ressortissant')->middleware('auth:sanctum')->group(function ()
 Route::prefix('v1/admin/demandes')->middleware(['auth:sanctum', 'role:super_admin,admin,agent'])->group(function () {
     Route::get('/', [DemandeAdminController::class, 'index']);
     Route::get('/{id}', [DemandeAdminController::class, 'show']);
+    Route::get('/documents/{documentId}/fichier', [DemandeAdminController::class, 'telechargerDocument']);
     Route::patch('/{id}/statut', [DemandeAdminController::class, 'changerStatut']);
     Route::patch('/documents/{documentId}', [DemandeAdminController::class, 'verifierDocument']);
 });

@@ -33,7 +33,14 @@ return [
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
-            'serve' => true,
+            // 'serve' => true (valeur par défaut du scaffold Laravel 11) enregistre
+            // automatiquement une route GET/PUT storage/{path} qui sert ce disque
+            // (storage/app/private) — elle entrait en conflit avec la route
+            // storage/{path} définie dans web.php pour servir le disque `public`
+            // (storage/app/public, utilisé par les images d'actualités, etc.),
+            // et gagnait car enregistrée plus tôt par le framework : 403 sur
+            // toutes les images. Désactivée, on ne s'en sert pas ici.
+            'serve' => false,
             'throw' => false,
             'report' => false,
         ],

@@ -7,6 +7,7 @@ use App\Models\Demande;
 use App\Models\DemandeDocument;
 use App\Models\JournalActivite;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 /**
@@ -84,6 +85,30 @@ class DemandeAdminController extends Controller
      * statut global de la demande, que l'admin fait progresser lui-même
      * une fois qu'il juge le dossier prêt (voir changerStatut()).
      */
+    /**
+     * Sert le fichier d'une pièce pour affichage (photo, PDF) dans
+     * l'espace admin. Le disque `local` est privé — cet endpoint, derrière
+     * auth:sanctum + whereHas('demande') (même garde-fou de scope entité
+     * que verifierDocument), est la seule façon d'y accéder.
+     */
+    public function telechargerDocument(Request $request, int $documentId)
+    {
+        $document = DemandeDocument::whereHas('demande')->find($documentId);
+
+        if (!$document || !Storage::disk('local')->exists($document->fichier)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pièce introuvable',
+            ], 404);
+        }
+
+        return Storage::disk('local')->response(
+            $document->fichier,
+            $document->nom_original,
+            ['Content-Disposition' => 'inline; filename="' . $document->nom_original . '"']
+        );
+    }
+
     public function verifierDocument(Request $request, int $documentId)
     {
         $validator = Validator::make($request->all(), [
@@ -261,6 +286,7 @@ class DemandeAdminController extends Controller
                 'code_document' => $d->code_document,
                 'label' => $d->label,
                 'nom_original' => $d->nom_original,
+                'fichier_url' => "/v1/admin/demandes/documents/{$d->id}/fichier",
                 'statut' => $d->statut,
                 'statut_label' => DemandeDocument::STATUTS[$d->statut] ?? $d->statut,
                 'motif_rejet' => $d->motif_rejet,
