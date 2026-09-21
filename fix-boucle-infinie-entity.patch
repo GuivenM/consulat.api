@@ -1,0 +1,51 @@
+diff --git a/app/Support/CurrentEntity.php b/app/Support/CurrentEntity.php
+index c9e6f84..dfac885 100644
+--- a/app/Support/CurrentEntity.php
++++ b/app/Support/CurrentEntity.php
+@@ -26,6 +26,7 @@ class CurrentEntity
+ {
+     private static ?Entity $forced = null;
+     private static ?Entity $resolved = null;
++    private static bool $resolving = false;
+ 
+     public static function resolve(): Entity
+     {
+@@ -76,14 +77,33 @@ private static function doResolve(): Entity
+             }
+         }
+ 
+-        $user = Auth::guard('sanctum')->user();
+-        if ($user && isset($user->entity_id) && $user->entity_id) {
+-            $entity = Entity::find($user->entity_id);
+-            if ($entity) {
+-                return $entity;
++        // Auth::guard('sanctum')->user() ci-dessous peut, en résolvant le modèle
++        // authentifié (Ressortissant, User…), déclencher son scope global
++        // `entity` — qui rappelle CurrentEntity::id() avant que cette résolution
++        // en cours n'ait posé self::$resolved. Sans ce garde-fou, ça boucle
++        // indéfiniment sur cet appel lui-même.
++        if (self::$resolving) {
++            return self::defaultEntity();
++        }
++
++        self::$resolving = true;
++        try {
++            $user = Auth::guard('sanctum')->user();
++            if ($user && isset($user->entity_id) && $user->entity_id) {
++                $entity = Entity::find($user->entity_id);
++                if ($entity) {
++                    return $entity;
++                }
+             }
++        } finally {
++            self::$resolving = false;
+         }
+ 
++        return self::defaultEntity();
++    }
++
++    private static function defaultEntity(): Entity
++    {
+         $defaultSlug = config('consulat.default_entity_slug', 'congo-benin');
+         $entity = Entity::where('slug', $defaultSlug)->first();
+ 

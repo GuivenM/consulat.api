@@ -18,6 +18,7 @@ use App\Http\Controllers\API\DemandeAdminController;
 use App\Http\Controllers\API\RessortissantAdminController;
 use App\Http\Controllers\API\TarifController;
 use App\Http\Controllers\API\DocumentTypeRequisController;
+use App\Models\Ressortissant;
 
 // ==================== ROUTES PUBLIQUES ====================
 
@@ -75,6 +76,15 @@ Route::prefix('v1')->group(function () {
 
     // Carte interactive - Vue publique (agrégation par ville uniquement)
     Route::get('/carte', [CartePubliqueController::class, 'index']);
+
+    // Liste de référence des 77 communes du Bénin, utilisée par le champ
+    // VilleSelect (registre consulaire, admin comme futur formulaire
+    // d'inscription public). Public et statique : aucune donnée
+    // personnelle, remplace l'ancien /v1/membres/villes (AJDCB, supprimé).
+    Route::get('/communes-benin', fn () => response()->json([
+        'success' => true,
+        'data' => Ressortissant::VILLES_BENIN,
+    ]));
 });
 
 // NOTE : le paiement FedaPay des billets d'événement (AJDCB) et son webhook
