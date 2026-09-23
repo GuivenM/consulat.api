@@ -62,6 +62,34 @@ class RessortissantAuthController extends Controller
             'password' => 'required|string|min:8|confirmed',
         ], [
             'ville.in' => "La ville doit correspondre à l'une des communes du Bénin.",
+            'required' => 'Le champ :attribute est obligatoire.',
+            'string' => 'Le champ :attribute doit être une chaîne de caractères.',
+            'email' => "L'adresse email n'est pas valide.",
+            'email.unique' => 'Un compte existe déjà avec cet email.',
+            'max.string' => 'Le champ :attribute ne doit pas dépasser :max caractères.',
+            'date' => 'Le champ :attribute doit être une date valide.',
+            'date_naissance.before' => 'La date de naissance doit être antérieure à aujourd\'hui.',
+            'date_expiration_piece.after' => "La date d'expiration de la pièce doit être postérieure à aujourd'hui.",
+            'date_arrivee.before_or_equal' => "La date d'arrivée ne peut pas être dans le futur.",
+            'numeric' => 'Le champ :attribute doit être un nombre.',
+            'between' => 'Le champ :attribute doit être compris entre :min et :max.',
+            'password.min' => 'Le mot de passe doit contenir au moins 8 caractères.',
+            'password.confirmed' => 'La confirmation du mot de passe ne correspond pas.',
+        ], [
+            'nom' => 'nom',
+            'prenom' => 'prénom',
+            'date_naissance' => 'date de naissance',
+            'lieu_naissance' => 'lieu de naissance',
+            'type_piece' => 'type de pièce',
+            'numero_piece' => 'numéro de pièce',
+            'date_expiration_piece' => "date d'expiration de la pièce",
+            'whatsapp' => 'numéro WhatsApp',
+            'telephone' => 'téléphone',
+            'quartier' => 'quartier',
+            'adresse' => 'adresse',
+            'date_arrivee' => "date d'arrivée",
+            'contact_urgence_nom' => "nom du contact d'urgence",
+            'contact_urgence_telephone' => "téléphone du contact d'urgence",
         ]);
 
         if ($validator->fails()) {
@@ -81,21 +109,34 @@ class RessortissantAuthController extends Controller
 
         try {
             $ressortissant = Ressortissant::create($donnees);
-
-            Mail::to($ressortissant->email)->send(new VerificationEmailRessortissant($ressortissant));
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Inscription enregistrée. Un email de vérification vous a été envoyé.',
-            ], 201);
         } catch (\Exception $e) {
-            \Log::error('Erreur inscription ressortissant: ' . $e->getMessage());
+            \Log::error('Erreur création ressortissant: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
                 'message' => "Erreur lors de l'inscription",
             ], 500);
         }
+
+        // Envoi du mail isolé : le compte est déjà créé à ce stade, donc un
+        // problème SMTP ne doit jamais se traduire par un "échec
+        // d'inscription" côté ressortissant (il aurait alors un compte
+        // fantôme, invisible pour lui, et ne pourrait plus réessayer car
+        // son email serait déjà pris).
+        $mailEnvoye = true;
+        try {
+            Mail::to($ressortissant->email)->send(new VerificationEmailRessortissant($ressortissant));
+        } catch (\Exception $e) {
+            $mailEnvoye = false;
+            \Log::error('Erreur envoi email vérification inscription: ' . $e->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $mailEnvoye
+                ? 'Inscription enregistrée. Un email de vérification vous a été envoyé.'
+                : "Inscription enregistrée, mais l'email de vérification n'a pas pu être envoyé. Utilisez \"Renvoyer l'email\" sur la page de connexion.",
+        ], 201);
     }
 
     /**
