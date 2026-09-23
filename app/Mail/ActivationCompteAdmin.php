@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\User;
+use App\Support\CurrentEntity;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -16,11 +17,14 @@ class ActivationCompteAdmin extends Mailable
     public User $user;
     public string $lienActivation;
     public bool $reinitialisation;
+    public \App\Models\Entity $entite;
 
     public function __construct(User $user, bool $reinitialisation = false)
     {
         $this->user = $user;
         $this->reinitialisation = $reinitialisation;
+        // Un super_admin n'a pas d'entité propre : on retombe sur l'entité courante.
+        $this->entite = $user->entity ?? CurrentEntity::resolve();
         $this->lienActivation = rtrim(config('app.frontend_url'), '/')
             . '/admin/activer-compte?token=' . $user->activation_token;
     }
@@ -29,8 +33,8 @@ class ActivationCompteAdmin extends Mailable
     {
         return new Envelope(
             subject: $this->reinitialisation
-                ? 'Réinitialisation de votre mot de passe AJDCB'
-                : 'Votre accès administrateur AJDCB',
+                ? 'Réinitialisation de votre mot de passe — ' . ($this->entite->nom_court ?? $this->entite->nom)
+                : 'Votre accès administrateur — ' . ($this->entite->nom_court ?? $this->entite->nom),
         );
     }
 

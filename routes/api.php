@@ -16,6 +16,7 @@ use App\Http\Controllers\ImageController;
 use App\Http\Controllers\API\RessortissantAuthController;
 use App\Http\Controllers\API\DemandeController;
 use App\Http\Controllers\API\DemandeAdminController;
+use App\Http\Controllers\API\PaiementAdminController;
 use App\Http\Controllers\API\RessortissantAdminController;
 use App\Http\Controllers\API\TarifController;
 use App\Http\Controllers\API\DocumentTypeRequisController;
@@ -148,10 +149,12 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
     });
 
     // ========== UTILISATEURS (comptes admin) ==========
-    // Liste, changement de rôle/statut, suppression, renvoi d'activation.
+    // Liste, création (avec email d'activation), changement de rôle/statut,
+    // suppression, renvoi d'activation.
     // Réservé au super_admin — ce sont des identifiants de connexion.
     Route::prefix('utilisateurs')->middleware('role:super_admin')->group(function () {
         Route::get('/', [UtilisateurController::class, 'index']);
+        Route::post('/', [UtilisateurController::class, 'store']);
         Route::put('/{id}', [UtilisateurController::class, 'update']);
         Route::delete('/{id}', [UtilisateurController::class, 'destroy']);
         Route::post('/{id}/renvoyer-activation', [UtilisateurController::class, 'renvoyerActivation']);
@@ -249,6 +252,12 @@ Route::prefix('v1/admin/demandes')->middleware(['auth:sanctum', 'role:super_admi
     Route::get('/documents/{documentId}/fichier', [DemandeAdminController::class, 'telechargerDocument']);
     Route::patch('/{id}/statut', [DemandeAdminController::class, 'changerStatut']);
     Route::patch('/documents/{documentId}', [DemandeAdminController::class, 'verifierDocument']);
+
+    // Encaissement au guichet : indispensable au workflow, un dossier ne
+    // peut passer « prêt » qu'une fois paiement_statut = paye (voir
+    // DemandeAdminController::changerStatut). Ouvert aux agents, c'est
+    // eux qui tiennent le guichet.
+    Route::post('/{demandeId}/paiement-guichet', [PaiementAdminController::class, 'encaisser']);
 });
 
 // Registre consulaire — consultation admin/agent (l'inscription reste en

@@ -4,15 +4,26 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Mail\ActivationCompteAdmin;
+use App\Models\JournalActivite;
 use App\Models\User;
+use App\Support\CurrentEntity;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class UtilisateurController extends Controller
 {
-    private const ROLES_VALIDES = ['super_admin', 'admin', 'moderateur', 'tresorier'];
+    /**
+     * Rôles assignables : ceux de User::ROLES (super_admin, admin, agent).
+     */
+    private static function rolesValides(): array
+    {
+        return array_keys(User::ROLES);
+    }
 
     /**
      * Liste de tous les comptes admin (super_admin uniquement — voir routes/api.php).
@@ -20,8 +31,8 @@ class UtilisateurController extends Controller
     public function index()
     {
         try {
-            $utilisateurs = User::with('membre:id,nom,prenom,poste')
-                ->orderByRaw("FIELD(role, 'super_admin', 'admin', 'tresorier', 'moderateur')")
+            $utilisateurs = User::with('entity:id,nom,nom_court')
+                ->orderByRaw("FIELD(role, 'super_admin', 'admin', 'agent')")
                 ->orderBy('nom')
                 ->get();
 
@@ -35,6 +46,76 @@ class UtilisateurController extends Controller
                 'message' => 'Erreur lors de la récupération des utilisateurs',
             ], 500);
         }
+    }
+
+    /**
+     * Crée un compte admin/agent et envoie le lien d'activation : la
+     * personne choisit elle-même son mot de passe (voir
+     * AuthController::activerCompteAdmin). Le mot de passe stocké d'ici là
+     * est aléatoire et personne ne le connaît — le compte est donc
+     * inutilisable tant que le lien n'a pas été suivi.
+     *
+     * entity_id : un super_admin n'appartient à aucune entité ; un admin
+     * ou un agent est rattaché à l'entité passée, à défaut à l'entité
+     * courante (une seule en V1).
+     */
+    public function store(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'nom' => 'required|string|max:100',
+            'prenom' => 'required|string|max:100',
+            'email' => 'required|email|max:191|unique:users,email',
+            'telephone' => 'nullable|string|max:30',
+            'role' => ['required', Rule::in(self::rolesValides())],
+            'entity_id' => 'nullable|integer|exists:entities,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $role = $request->input('role');
+        $entityId = $role === 'super_admin'
+            ? null
+            : ($request->input('entity_id') ?? CurrentEntity::id());
+
+        $utilisateur = User::create([
+            'entity_id' => $entityId,
+            'nom' => $request->input('nom'),
+            'prenom' => $request->input('prenom'),
+            'email' => $request->input('email'),
+            'telephone' => $request->input('telephone'),
+            'role' => $role,
+            'est_actif' => true,
+            'password' => Hash::make(Str::random(40)),
+            'activation_token' => Str::random(64),
+            'activation_token_expire_at' => now()->addDays(7),
+        ]);
+
+        JournalActivite::enregistrer(
+            'utilisateur.creer',
+            "Compte {$utilisateur->role_label} créé : {$utilisateur->nom_complet} ({$utilisateur->email})",
+            $utilisateur
+        );
+
+        // Le compte existe déjà : un échec d'envoi ne doit pas le faire
+        // disparaître, le super_admin peut renvoyer le lien depuis la liste.
+        try {
+            Mail::to($utilisateur->email)->send(new ActivationCompteAdmin($utilisateur));
+            $message = 'Compte créé. Email d\'activation envoyé à ' . $utilisateur->email;
+        } catch (\Exception $e) {
+            Log::error('Envoi email activation admin échoué: ' . $e->getMessage());
+            $message = 'Compte créé, mais l\'email d\'activation n\'a pas pu être envoyé. Utilisez « Renvoyer l\'activation ».';
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'data' => $utilisateur->load('entity:id,nom,nom_court'),
+        ], 201);
     }
 
     /**
@@ -55,7 +136,7 @@ class UtilisateurController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'role' => 'sometimes|in:' . implode(',', self::ROLES_VALIDES),
+                'role' => ['sometimes', Rule::in(self::rolesValides())],
                 'est_actif' => 'sometimes|boolean',
             ]);
 
@@ -88,14 +169,14 @@ class UtilisateurController extends Controller
             $utilisateur->update($request->only(['role', 'est_actif']));
 
             if ($request->has('role') && $request->role !== $ancienRole) {
-                \App\Models\JournalActivite::enregistrer(
+                JournalActivite::enregistrer(
                     'utilisateur.modifier_role',
                     "Rôle de {$utilisateur->nom_complet} changé : {$ancienRole} -> {$utilisateur->role}",
                     $utilisateur
                 );
             }
             if ($request->has('est_actif') && $request->boolean('est_actif') !== $ancienStatut) {
-                \App\Models\JournalActivite::enregistrer(
+                JournalActivite::enregistrer(
                     'utilisateur.changer_statut',
                     "Compte {$utilisateur->nom_complet} " . ($utilisateur->est_actif ? 'réactivé' : 'désactivé'),
                     $utilisateur
@@ -105,7 +186,7 @@ class UtilisateurController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Utilisateur mis à jour',
-                'data' => $utilisateur->fresh('membre:id,nom,prenom,poste'),
+                'data' => $utilisateur->fresh('entity:id,nom,nom_court'),
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -139,7 +220,7 @@ class UtilisateurController extends Controller
 
             $utilisateur->delete();
 
-            \App\Models\JournalActivite::enregistrer(
+            JournalActivite::enregistrer(
                 'utilisateur.supprimer',
                 "Compte admin supprimé : {$utilisateur->nom_complet} ({$utilisateur->email})",
                 null,

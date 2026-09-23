@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Votre accès administrateur AJDCB</title>
+    <title>Votre accès administrateur</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -52,15 +52,14 @@
 </head>
 <body>
     <div class="header">
-        <h1>Association des Jeunes de la Diaspora Congolaise au Bénin</h1>
-        <p style="color: #3f794b; font-style: italic;">Solidarité - Réflexion - Action</p>
+        <h1>{{ $entite->nom }}</h1>
     </div>
 
     <div class="content">
         <h2>Bonjour {{ $user->prenom }} {{ $user->nom }},</h2>
 
         @if($reinitialisation)
-            <p>Vous avez demandé la réinitialisation du mot de passe de votre accès administrateur AJDCB.</p>
+            <p>Vous avez demandé la réinitialisation du mot de passe de votre accès à l'espace d'administration.</p>
 
             <p>Pour choisir un nouveau mot de passe, cliquez sur le bouton ci-dessous :</p>
 
@@ -68,10 +67,10 @@
                 <a href="{{ $lienActivation }}" class="bouton">Choisir un nouveau mot de passe</a>
             </p>
 
-            <p>Ce lien est valable 7 jours. Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement le Bureau Exécutif — votre mot de passe actuel reste inchangé tant que vous n'avez pas cliqué.</p>
+            <p>Ce lien est valable 7 jours. Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement un administrateur — votre mot de passe actuel reste inchangé tant que vous n'avez pas cliqué.</p>
         @else
             <p>
-                Un accès à l'espace d'administration du site de l'AJDCB vient de vous être créé, avec le rôle
+                Un accès à l'espace d'administration du {{ $entite->nom_court ?? $entite->nom }} vient de vous être créé, avec le rôle
                 <span class="role-badge">{{ $user->role_label }}</span>.
             </p>
 
@@ -81,17 +80,21 @@
                 <a href="{{ $lienActivation }}" class="bouton">Activer mon accès administrateur</a>
             </p>
 
-            <p>Ce lien est valable 7 jours. Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement le Bureau Exécutif.</p>
+            <p>Ce lien est valable 7 jours. Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement un administrateur.</p>
         @endif
 
-        <p>Solidaires,</p>
-        <p><strong>Le Bureau Exécutif de l'AJDCB</strong></p>
+        <p>Cordialement,</p>
+        <p><strong>{{ $entite->nom_court ?? $entite->nom }}</strong></p>
     </div>
 
     <div class="footer">
-        <p>Association des Jeunes de la Diaspora Congolaise au Bénin (AJDCB)</p>
-        <p>Cotonou - République du Bénin</p>
-        <p>Email: contact@ajdcb.org | Tél: +229 01 66 24 62 68</p>
+        <p>{{ $entite->nom }}</p>
+        @if($entite->adresse || $entite->ville_siege)
+            <p>{{ collect([$entite->adresse, $entite->ville_siege])->filter()->implode(' - ') }}</p>
+        @endif
+        @if($entite->email || $entite->telephone)
+            <p>{{ collect([$entite->email ? 'Email: ' . $entite->email : null, $entite->telephone ? 'Tél: ' . $entite->telephone : null])->filter()->implode(' | ') }}</p>
+        @endif
     </div>
 </body>
 </html>

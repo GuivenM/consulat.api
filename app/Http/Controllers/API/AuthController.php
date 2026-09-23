@@ -102,8 +102,8 @@ public function login(Request $request)
 }
 
     /**
-     * Activation d'un accès admin créé depuis une fiche membre
-     * (voir MembreController::creerAccesAdmin) : l'intéressé choisit son
+     * Activation d'un accès admin/agent créé par un super_admin
+     * (voir UtilisateurController::store) : l'intéressé choisit son
      * mot de passe via le lien reçu par email, puis est connecté directement.
      */
     public function activerCompteAdmin(Request $request)
