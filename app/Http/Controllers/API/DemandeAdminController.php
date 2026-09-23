@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Demande;
 use App\Models\DemandeDocument;
 use App\Models\JournalActivite;
+use App\Models\Paiement;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -293,6 +294,19 @@ class DemandeAdminController extends Controller
                 'verifie_par' => $d->verifiePar?->nom_complet,
                 'verifie_at' => $d->verifie_at?->format('d/m/Y H:i'),
                 'created_at' => $d->created_at->format('d/m/Y H:i'),
+            ]);
+            $donnees['paiements'] = $demande->paiements->map(fn (Paiement $p) => [
+                'id' => $p->id,
+                'montant' => $p->montant,
+                'devise' => $p->devise,
+                'statut' => $p->statut,
+                'canal' => $p->canal,
+                'canal_label' => Paiement::CANAUX[$p->canal] ?? $p->canal,
+                'mode' => $p->mode,
+                'mode_label' => $p->mode ? (Paiement::MODES_GUICHET[$p->mode] ?? $p->mode) : null,
+                'numero_recu' => $p->numero_recu,
+                'date_encaissement' => $p->date_encaissement?->format('d/m/Y H:i'),
+                'created_at' => $p->created_at->format('d/m/Y H:i'),
             ]);
         }
 
