@@ -9,6 +9,7 @@ use App\Http\Controllers\API\PartenaireController;
 use App\Http\Controllers\API\NewsletterController;
 use App\Http\Controllers\API\StatistiquesPubliquesController;
 use App\Http\Controllers\API\CartePubliqueController;
+use App\Http\Controllers\API\ServicesPubliqueController;
 use App\Http\Controllers\API\UtilisateurController;
 use App\Http\Controllers\API\JournalActiviteController;
 use App\Http\Controllers\ImageController;
@@ -76,6 +77,11 @@ Route::prefix('v1')->group(function () {
 
     // Carte interactive - Vue publique (agrégation par ville uniquement)
     Route::get('/carte', [CartePubliqueController::class, 'index']);
+
+    // Services consulaires - Vue publique : fourchette de prix par type de
+    // demande + pièces requises. Ne jamais réutiliser TarifController ici,
+    // dont la route reste volontairement privée (voir son commentaire).
+    Route::get('/services', [ServicesPubliqueController::class, 'index']);
 
     // Liste de référence des 77 communes du Bénin, utilisée par le champ
     // VilleSelect (registre consulaire, admin comme futur formulaire
