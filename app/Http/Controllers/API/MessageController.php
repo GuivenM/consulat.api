@@ -195,11 +195,9 @@ class MessageController extends Controller
                     $request->objet ?: 'Réponse à votre message — ' . ($message->entity->nom_court ?? $message->entity->nom)
                 ));
                 
-                // Mettre à jour le statut du message
-                $message->update([
-                    'statut' => 'repondu',
-                    'date_reponse' => now()
-                ]);
+                // Conserve le texte envoyé, la date et l'agent qui a répondu
+                // (le front affiche selected.reponse).
+                $message->repondre($request->reponse, $request->user()?->id);
                 
                 return response()->json([
                     'success' => true,
