@@ -32,7 +32,7 @@ jobs:
           protocol: ftps
           port: 21
           local-dir: ./
-          server-dir: /home/avdcyenp/repositories/consulat.api        # app root, NOT the web root
+          server-dir: /home/avdcyenp/repositories/consulat.api/        # app root, NOT the web root
           exclude: |
             **/.git*/**
             **/.github/**
