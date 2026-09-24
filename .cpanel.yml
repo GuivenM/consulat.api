@@ -1,0 +1,11 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/avdcyenp/repositories/consulat.api/
+    - export PHP=/opt/alt/php85/usr/bin/php
+    - /bin/cp -R app $DEPLOYPATH
+    - /bin/cp -R routes $DEPLOYPATH
+    - /bin/cp -R config $DEPLOYPATH
+    - /bin/cp -R database $DEPLOYPATH
+    - /bin/cp -R resources $DEPLOYPATH
+    - cd $DEPLOYPATH && $PHP artisan optimize:clear
