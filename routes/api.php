@@ -252,6 +252,7 @@ Route::prefix('v1/admin/demandes')->middleware(['auth:sanctum', 'role:super_admi
     Route::get('/documents/{documentId}/fichier', [DemandeAdminController::class, 'telechargerDocument']);
     Route::patch('/{id}/statut', [DemandeAdminController::class, 'changerStatut']);
     Route::patch('/documents/{documentId}', [DemandeAdminController::class, 'verifierDocument']);
+    Route::post('/{demandeId}/documents/valider-tout', [DemandeAdminController::class, 'validerToutesPieces']);
 
     // Encaissement au guichet : indispensable au workflow, un dossier ne
     // peut passer « prêt » qu'une fois paiement_statut = paye (voir

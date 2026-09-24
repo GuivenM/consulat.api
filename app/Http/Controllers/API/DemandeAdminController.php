@@ -8,6 +8,7 @@ use App\Models\DemandeDocument;
 use App\Models\JournalActivite;
 use App\Models\Paiement;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
@@ -164,6 +165,55 @@ class DemandeAdminController extends Controller
     }
 
     /**
+     * Valide d'un coup toutes les pièces encore « en attente » d'un
+     * dossier. Les pièces déjà rejetées ne sont pas touchées : un rejet est
+     * une décision de l'agent, pas un état à écraser en lot. Une seule
+     * entrée de journal pour l'ensemble, plutôt qu'une par pièce.
+     */
+    public function validerToutesPieces(Request $request, int $demandeId)
+    {
+        // Demande::find applique le scope d'entité : un agent ne peut pas
+        // valider les pièces d'une autre entité en devinant un ID.
+        $demande = Demande::find($demandeId);
+
+        if (!$demande) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Demande introuvable',
+            ], 404);
+        }
+
+        if (in_array($demande->statut, ['retire', 'rejete'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ce dossier est clos, ses pièces ne peuvent plus être modifiées.',
+            ], 422);
+        }
+
+        $documents = $demande->documents()->where('statut', 'en_attente')->get();
+
+        DB::transaction(function () use ($documents, $request) {
+            foreach ($documents as $document) {
+                $document->verifier('valide', $request->user()->id);
+            }
+        });
+
+        if ($documents->isNotEmpty()) {
+            JournalActivite::enregistrer(
+                'demande_document.valide',
+                "{$documents->count()} pièce(s) validée(s) en lot sur le dossier {$demande->numero_dossier}",
+                $demande
+            );
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $documents->isEmpty() ? 'Aucune pièce en attente' : 'Pièces validées',
+            'data' => ['validees' => $documents->count()],
+        ]);
+    }
+
+    /**
      * Fait progresser une demande, ou la rejette. Les préconditions sont
      * vérifiées ici (pas dans le modèle) pour renvoyer des messages
      * explicites au front plutôt qu'une exception générique.
@@ -287,6 +337,7 @@ class DemandeAdminController extends Controller
                 'code_document' => $d->code_document,
                 'label' => $d->label,
                 'nom_original' => $d->nom_original,
+                'mime' => $d->mime,
                 'fichier_url' => "/v1/admin/demandes/documents/{$d->id}/fichier",
                 'statut' => $d->statut,
                 'statut_label' => DemandeDocument::STATUTS[$d->statut] ?? $d->statut,

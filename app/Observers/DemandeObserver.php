@@ -39,7 +39,7 @@ class DemandeObserver
 
         MailRessortissant::envoyer(
             $ressortissant,
-            new DemandeStatutChange($demande, $ressortissant),
+            fn () => new DemandeStatutChange($demande, $ressortissant),
             "demande {$demande->numero_dossier} → {$demande->statut}"
         );
     }

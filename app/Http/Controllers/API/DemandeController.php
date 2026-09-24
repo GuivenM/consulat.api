@@ -337,6 +337,9 @@ class DemandeController extends Controller
             'devise' => $demande->devise,
             'paiement_statut' => $demande->paiement_statut,
             'documents_complets' => $demande->documents_complets,
+            // Pièces refusées en attente d'un redépôt (le redépôt remet la pièce
+            // en_attente, voir uploadDocument) : alimente l'alerte « action requise ».
+            'pieces_a_corriger' => $demande->documents->where('statut', 'rejete')->count(),
             'date_depot' => $demande->date_depot?->format('d/m/Y H:i'),
             'date_disponibilite_prevue' => $demande->date_disponibilite_prevue?->format('d/m/Y'),
             'date_pret' => $demande->date_pret?->format('d/m/Y H:i'),

@@ -37,7 +37,7 @@ class DemandeDocumentObserver
 
         MailRessortissant::envoyer(
             $ressortissant,
-            new PieceRejetee($document, $demande, $ressortissant),
+            fn () => new PieceRejetee($document, $demande, $ressortissant),
             "pièce {$document->code_document} du dossier {$demande->numero_dossier}"
         );
     }
