@@ -338,30 +338,39 @@ public function login(Request $request)
     }
 
     /**
-     * Modules de l'espace d'administration accessibles selon le rôle.
+     * Ce que chaque rôle peut faire dans l'espace d'administration, par
+     * module : `voir` (lecture) et `modifier` (création, édition,
+     * traitement).
      *
-     * Reflète les groupes de routes de routes/api.php (middleware `role:`) :
-     * la vraie barrière reste le middleware côté serveur, cette carte ne
-     * sert qu'à informer le frontend (par exemple pour masquer un menu).
-     * À tenir alignée si un groupe de routes change de rôles.
+     * Reflète les middlewares `role:` de routes/api.php et le menu du
+     * frontend (AdminLayout). La vraie barrière reste le middleware côté
+     * serveur : cette carte ne sert qu'à informer le frontend. À tenir
+     * alignée si un groupe de routes change de rôles.
      */
     private function getPermissionsByRole($role)
     {
+        $tous = ['super_admin', 'admin', 'agent'];
+        $gestionnaires = ['super_admin', 'admin'];
+
+        // module => [rôles qui voient, rôles qui modifient]
         $acces = [
-            'dashboard' => ['super_admin', 'admin', 'agent'],
-            'demandes' => ['super_admin', 'admin', 'agent'],
-            'registre' => ['super_admin', 'admin', 'agent'],
-            'messages' => ['super_admin', 'admin'],
-            'actualites' => ['super_admin', 'admin'],
-            'guide' => ['super_admin', 'admin'],
-            'partenaires' => ['super_admin', 'admin'],
-            'configuration' => ['super_admin', 'admin'],
-            'utilisateurs' => ['super_admin'],
-            'journal' => ['super_admin'],
+            'dashboard' => [$tous, []],
+            'demandes' => [$tous, $tous],
+            'registre' => [$tous, []],
+            'messages' => [$tous, $gestionnaires],
+            'actualites' => [$tous, $gestionnaires],
+            'guide' => [$tous, $gestionnaires],
+            'partenaires' => [$tous, $gestionnaires],
+            'configuration' => [$gestionnaires, $gestionnaires],
+            'utilisateurs' => [['super_admin'], ['super_admin']],
+            'journal' => [['super_admin'], []],
         ];
 
         return array_map(
-            fn (array $roles) => in_array($role, $roles, true),
+            fn (array $roles) => [
+                'voir' => in_array($role, $roles[0], true),
+                'modifier' => in_array($role, $roles[1], true),
+            ],
             $acces
         );
     }

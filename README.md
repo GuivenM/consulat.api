@@ -71,7 +71,7 @@ Toutes les données métier appartiennent à une **entité** (`entities`) : un c
 |---|---|
 | `super_admin` | Tout, dont la gestion des **utilisateurs** et la consultation du **journal d'activité**. Non rattaché à une entité. |
 | `admin` | Traiter les demandes, encaisser, gérer le contenu (actualités, guide, partenaires, messages), configurer tarifs et pièces requises. |
-| `agent` | Traiter les demandes (vérifier les pièces, changer le statut), encaisser au guichet, consulter le registre. |
+| `agent` | Traiter les demandes (vérifier les pièces, changer le statut), encaisser au guichet, consulter le registre. Lecture seule sur les messages, actualités, guide et partenaires. |
 | ressortissant | Espace consulaire uniquement (`/v1/ressortissant/...`) : son profil et ses propres demandes. |
 
 Contrôlé par le middleware `role:...` (`CheckRole`) sur les routes protégées.
