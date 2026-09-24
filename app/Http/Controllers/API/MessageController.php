@@ -71,7 +71,7 @@ class MessageController extends Controller
                 'prenom' => 'required|string|max:255',
                 'email' => 'required|email|max:255',
                 'telephone' => 'required|string|max:20',
-                'objet' => 'required|in:question,partenariat,adhesion,urgence,autre',
+                'objet' => 'required|in:question,partenariat,service_consulaire,urgence,autre',
                 'message' => 'required|string',
                 'organisation' => 'required_if:objet,partenariat|nullable|string|max:255',
                 'type_organisation' => 'nullable|in:institution,ong,entreprise,media,universite,association',
@@ -102,11 +102,15 @@ class MessageController extends Controller
 
             // Envoyer notification à l'admin pour le nouveau message
             try {
-                $adminEmail = config('mail.admin_address');
-                if (!$adminEmail) {
-                    $adminEmail = 'contact@ajdcb.org';
+                // Pas de repli en dur : une adresse d'une autre organisation
+                // recevrait les messages des citoyens. Sans MAIL_ADMIN_ADDRESS,
+                // on retombe sur l'email de l'entité, sinon on journalise.
+                $adminEmail = config('mail.admin_address') ?: ($message->entity->email ?? null);
+                if ($adminEmail) {
+                    Mail::to($adminEmail)->send(new NotificationNouveauMessage($message));
+                } else {
+                    \Log::warning('Nouveau message de contact : aucun destinataire admin (MAIL_ADMIN_ADDRESS ou email de l\'entité).');
                 }
-                Mail::to($adminEmail)->send(new NotificationNouveauMessage($message));
             } catch (\Exception $e) {
                 \Log::error('Erreur envoi email notification admin message: ' . $e->getMessage());
             }
@@ -188,7 +192,7 @@ class MessageController extends Controller
                 Mail::to($message->email)->send(new ReponseMessage(
                     $message, 
                     $request->reponse,
-                    $request->objet ?: 'Réponse à votre message - AJDCB'
+                    $request->objet ?: 'Réponse à votre message — ' . ($message->entity->nom_court ?? $message->entity->nom)
                 ));
                 
                 // Mettre à jour le statut du message
@@ -350,7 +354,7 @@ class MessageController extends Controller
                 'par_objet' => [
                     'question' => Message::where('objet', 'question')->count(),
                     'partenariat' => Message::where('objet', 'partenariat')->count(),
-                    'adhesion' => Message::where('objet', 'adhesion')->count(),
+                    'service_consulaire' => Message::where('objet', 'service_consulaire')->count(),
                     'urgence' => Message::where('objet', 'urgence')->count(),
                     'autre' => Message::where('objet', 'autre')->count(),
                 ]

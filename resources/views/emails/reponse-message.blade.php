@@ -45,18 +45,16 @@
 </head>
 <body>
     <div class="header">
-        <h1>Association des Jeunes de la Diaspora Congolaise au Bénin</h1>
-        <p style="color: #28a745; font-style: italic;">Solidarité - Réflexion - Action</p>
+        <h1>{{ $entite->nom }}</h1>
     </div>
 
     <div class="content">
-        <!-- Utilisez messageData au lieu de message -->
         <h2>Bonjour {{ $messageData->prenom }} {{ $messageData->nom }},</h2>
         
         <p>Suite à votre message du {{ $messageData->created_at->format('d/m/Y') }}, voici notre réponse :</p>
 
         <div class="reponse-box">
-            <h3>Réponse de l'AJDCB :</h3>
+            <h3>Notre réponse :</h3>
             <p>{{ $reponse }}</p>
         </div>
 
@@ -64,14 +62,18 @@
 
         <div class="signature">
             <p>Cordialement,</p>
-            <p><strong>L'équipe AJDCB</strong></p>
+            <p><strong>{{ $entite->nom_court ?? $entite->nom }}</strong></p>
         </div>
     </div>
 
     <div class="footer">
-        <p>Association des Jeunes de la Diaspora Congolaise au Bénin (AJDCB)</p>
-        <p>Cotonou - République du Bénin</p>
-        <p>Email: contact@ajdcb.org | Tél: +229 01 66 24 62 68</p>
+        <p>{{ $entite->nom }}</p>
+        @if($entite->adresse || $entite->ville_siege)
+            <p>{{ collect([$entite->adresse, $entite->ville_siege])->filter()->implode(' - ') }}</p>
+        @endif
+        @if($entite->email || $entite->telephone)
+            <p>{{ collect([$entite->email ? 'Email: ' . $entite->email : null, $entite->telephone ? 'Tél: ' . $entite->telephone : null])->filter()->implode(' | ') }}</p>
+        @endif
     </div>
 </body>
 </html>

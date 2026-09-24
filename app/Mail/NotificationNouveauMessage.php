@@ -3,7 +3,9 @@
 
 namespace App\Mail;
 
+use App\Models\Entity;
 use App\Models\Message;
+use App\Support\CurrentEntity;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
@@ -25,14 +27,17 @@ class NotificationNouveauMessage extends Mailable
         $objetLabels = [
             'question' => '❓ Question',
             'partenariat' => '🤝 Partenariat',
-            'adhesion' => '📋 Adhésion',
+            'service_consulaire' => '📋 Question sur une démarche',
             'urgence' => '⚠️ Urgence',
             'autre' => '📝 Autre'
         ];
 
-        return $this->subject('📬 Nouveau message de contact - AJDCB')
+        $entite = $this->message->entity ?? CurrentEntity::resolve();
+
+        return $this->subject('📬 Nouveau message de contact — ' . ($entite->nom_court ?? $entite->nom))
                     ->view('emails.nouveau-message')
                     ->with([
+                        'entite' => $entite,
                         'nom' => $this->message->nom,
                         'prenom' => $this->message->prenom,
                         'email' => $this->message->email,

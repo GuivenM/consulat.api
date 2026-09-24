@@ -56,14 +56,13 @@
 </head>
 <body>
     <div class="header">
-        <h1>Association des Jeunes de la Diaspora Congolaise au Bénin</h1>
-        <p style="color: #007bff; font-style: italic;">Solidarité - Réflexion - Action</p>
+        <h1>{{ $entite->nom }}</h1>
     </div>
 
     <div class="content">
         <h2>Bonjour {{ $message->prenom }} {{ $message->nom }},</h2>
         
-        <p>Nous vous remercions d'avoir contacté l'AJDCB. Votre message a bien été reçu et sera traité dans les plus brefs délais.</p>
+        <p>Nous vous remercions d'avoir contacté le {{ $entite->nom_court ?? $entite->nom }}. Votre message a bien été reçu et sera traité dans les meilleurs délais.</p>
 
         <div class="message-box">
             <h3>Récapitulatif de votre message :</h3>
@@ -71,7 +70,7 @@
                 @switch($message->objet)
                     @case('question') Question @break
                     @case('partenariat') Demande de partenariat @break
-                    @case('adhesion') Demande d'adhésion @break
+                    @case('service_consulaire') Question sur une démarche @break
                     @case('urgence') Urgence communautaire @break
                     @default Autre
                 @endswitch
@@ -80,26 +79,23 @@
             <p>{{ $message->message }}</p>
         </div>
 
-        <p><strong>Notre équipe vous répondra dans les 48 heures maximum.</strong></p>
+        <p>En attendant notre réponse, vous pouvez consulter les informations et les démarches disponibles sur notre site.</p>
 
-        <p>En attendant, n'hésitez pas à :</p>
-        <ul>
-            <li>Visiter notre site web pour plus d'informations</li>
-            <li>Nous suivre sur nos réseaux sociaux</li>
-            <li>Consulter notre guide du Congolais au Bénin</li>
-        </ul>
+        <a href="{{ $siteUrl }}" class="btn">Visiter notre site</a>
 
-        <a href="https://ajdcb.org" class="btn">Visiter notre site</a>
-
-        <p>Solidaires,</p>
-        <p><strong>L'équipe AJDCB</strong></p>
+        <p>Cordialement,</p>
+        <p><strong>{{ $entite->nom_court ?? $entite->nom }}</strong></p>
     </div>
 
     <div class="footer">
-        <p>Association des Jeunes de la Diaspora Congolaise au Bénin (AJDCB)</p>
-        <p>Cotonou - République du Bénin</p>
-        <p>Email: contact@ajdcb.org | Tél: +229 01 66 24 62 68</p>
-        <p>&copy; {{ date('Y') }} AJDCB. Tous droits réservés.</p>
+        <p>{{ $entite->nom }}</p>
+        @if($entite->adresse || $entite->ville_siege)
+            <p>{{ collect([$entite->adresse, $entite->ville_siege])->filter()->implode(' - ') }}</p>
+        @endif
+        @if($entite->email || $entite->telephone)
+            <p>{{ collect([$entite->email ? 'Email: ' . $entite->email : null, $entite->telephone ? 'Tél: ' . $entite->telephone : null])->filter()->implode(' | ') }}</p>
+        @endif
+        <p>&copy; {{ date('Y') }} {{ $entite->nom_court ?? $entite->nom }}. Tous droits réservés.</p>
     </div>
 </body>
 </html>

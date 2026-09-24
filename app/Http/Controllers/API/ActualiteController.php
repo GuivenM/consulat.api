@@ -141,7 +141,8 @@ class ActualiteController extends Controller
         $data = $request->except(['image', 'photos']);
         
         // Valeurs par défaut
-        $data['auteur'] = 'AJDCB';
+        $entite = \App\Support\CurrentEntity::resolve();
+        $data['auteur'] = $entite->nom_court ?? $entite->nom;
         // Le slug sera généré automatiquement par le modèle
 
         if ($request->hasFile('image')) {

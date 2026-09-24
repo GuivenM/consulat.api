@@ -225,7 +225,7 @@
             <div class="footer">
                 <p style="margin: 0;">
                     Cet email a été envoyé automatiquement suite à un nouveau message sur le site.<br>
-                    © {{ date('Y') }} AJDCB - Tous droits réservés
+                    © {{ date('Y') }} {{ $entite->nom_court ?? $entite->nom }} - Tous droits réservés
                 </p>
             </div>
         </div>
