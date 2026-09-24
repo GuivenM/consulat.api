@@ -6,7 +6,7 @@
 // n'importe quel site à appeler cette API avec les cookies/tokens de
 // l'utilisateur. On restreint désormais aux origines listées dans
 // CORS_ALLOWED_ORIGINS (.env), séparées par des virgules.
-// Exemple .env : CORS_ALLOWED_ORIGINS=https://ajdcb.org,http://localhost:5173
+// Exemple .env : CORS_ALLOWED_ORIGINS=https://consulatcongo-benin.com,http://localhost:5173
 return [
     'paths' => ['api/*', 'storage/*', 'sanctum/csrf-cookie'],
     'allowed_methods' => ['*'],

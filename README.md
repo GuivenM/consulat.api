@@ -20,12 +20,12 @@ cp .env.example .env
 php artisan key:generate
 # renseigner la base de données et le mail dans .env, puis :
 php artisan migrate
-php artisan db:seed --class=ConsulatCongoBeninSeeder   # tarifs et pièces requises
+php artisan db:seed                                    # tarifs et pièces requises
 php artisan storage:link
 php artisan serve
 ```
 
-L'entité `congo-benin` est créée par la migration `create_entities_table`. Le seeder `ConsulatCongoBeninSeeder` ajoute la grille de tarifs et la liste des pièces requises ; les deux sont ensuite modifiables depuis l'écran **Configuration** de l'admin.
+L'entité `congo-benin` est créée par la migration `create_entities_table`. Le seeding (`ConsulatCongoBeninSeeder`) ajoute la grille de tarifs et la liste des pièces requises ; les deux sont ensuite modifiables depuis l'écran **Configuration** de l'admin.
 
 ### Créer le premier super administrateur
 
@@ -40,7 +40,7 @@ php artisan tinker
 ... ]);
 ```
 
-> ⚠️ Ne pas utiliser `DatabaseSeeder` ni `TestAdminSeeder` en production : ils créent des comptes `@ajdcb.org` hérités de l'AJDCB, et `TestAdminSeeder` un mot de passe connu (`Test1234!`). Usage local uniquement.
+> `DatabaseSeeder` ne crée aucun compte (il appelle seulement `ConsulatCongoBeninSeeder`) : sans danger en production. `TestAdminSeeder` crée un super admin de test au mot de passe connu (`Test1234!`) ; il refuse de s'exécuter en production, mais si un compte `test@ajdcb.org` existe déjà sur un serveur, supprimez-le.
 
 ## Variables d'environnement
 
@@ -146,7 +146,7 @@ php artisan config:cache && php artisan route:cache && php artisan view:cache
 - `APP_ENV=production`, `APP_DEBUG=false`, `APP_KEY` défini.
 - `APP_URL`, `FRONTEND_URL` et `CORS_ALLOWED_ORIGINS` sur les vrais domaines.
 - `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME` et `MAIL_ADMIN_ADDRESS` renseignés (sinon l'expéditeur retombe sur les valeurs par défaut du code).
-- Aucun compte de test ni seeder AJDCB exécuté.
+- Aucun compte de test (`test@ajdcb.org`) présent en base.
 - Après un changement de `.env` avec le cache activé : `php artisan config:clear`.
 
 ## Points d'attention
@@ -154,5 +154,5 @@ php artisan config:cache && php artisan route:cache && php artisan view:cache
 - **Paiement en ligne non disponible.** Le `PaiementController` et le webhook FedaPay hérités de l'AJDCB (cotisations, billets d'événements) ont été retirés : ils référençaient des modèles supprimés. `FedaPayService` et `Paiement::CANAUX` sont conservés pour reconstruire le paiement en ligne des demandes consulaires. Seul l'encaissement au guichet fonctionne aujourd'hui.
 - **Pas de notification push**, uniquement des emails.
 - **Tests** : seuls les `ExampleTest` de Laravel existent. Le workflow statut/paiement/pièces et l'isolation entre entités sont à couvrir en priorité.
-- **Code hérité de l'AJDCB** à nettoyer progressivement : `getPermissionsByRole` (`AuthController`) ignore le rôle `agent` (sans effet, le front filtre par rôle), les seeders `DatabaseSeeder` / `TestAdminSeeder`, la référence `ajdcb` dans `config/cors.php` et `config/services.php`, ainsi que les commentaires de plusieurs modèles.
+- **Reliquats de l'AJDCB** : il ne reste que des commentaires historiques dans certains modèles et migrations, et l'email du compte de `TestAdminSeeder`. Sans effet fonctionnel.
 - **Conventions** : les modèles exposent leurs accesseurs calculés via `protected $appends` ; un accesseur absent de cette liste est invisible dans le JSON. Les contrôleurs construisent leurs données à partir des champs **validés** uniquement, jamais de `$request->all()`, pour empêcher l'injection de champs comme `statut` ou `traite_par`.

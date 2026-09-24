@@ -47,7 +47,7 @@ return [
     ],
 
     'facebook' => [
-        // ID de la Page AJDCB (visible dans Paramètres de la Page > À propos,
+        // ID de la Page Facebook du consulat (visible dans Paramètres de la Page > À propos,
         // ou via https://graph.facebook.com/{nom-de-la-page}?fields=id).
         'page_id' => env('FACEBOOK_PAGE_ID'),
         // Token d'accès de PAGE longue durée (pas un token utilisateur) généré

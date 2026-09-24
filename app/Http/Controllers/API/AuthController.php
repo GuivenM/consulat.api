@@ -338,56 +338,32 @@ public function login(Request $request)
     }
 
     /**
-     * Obtenir les permissions en fonction du rôle
+     * Modules de l'espace d'administration accessibles selon le rôle.
+     *
+     * Reflète les groupes de routes de routes/api.php (middleware `role:`) :
+     * la vraie barrière reste le middleware côté serveur, cette carte ne
+     * sert qu'à informer le frontend (par exemple pour masquer un menu).
+     * À tenir alignée si un groupe de routes change de rôles.
      */
     private function getPermissionsByRole($role)
     {
-        $permissions = [
-            'super_admin' => [
-                'dashboard' => ['view', 'manage'],
-                'users' => ['view', 'create', 'edit', 'delete', 'manage'],
-                'messages' => ['view', 'reply', 'delete'],
-                'adhesions' => ['view', 'approve', 'reject', 'delete'],
-                'actualites' => ['view', 'create', 'edit', 'delete', 'publish'],
-                'actions' => ['view', 'create', 'edit', 'delete', 'manage'],
-                'membres' => ['view', 'create', 'edit', 'delete', 'manage'],
-                'partenaires' => ['view', 'create', 'edit', 'delete'],
-                'evenements' => ['view', 'create', 'edit', 'delete'],
-                'projets' => ['view', 'create', 'edit', 'delete'],
-                'documents' => ['view', 'upload', 'delete'],
-                'parametres' => ['view', 'edit']
-            ],
-            'admin' => [
-                'dashboard' => ['view'],
-                'messages' => ['view', 'reply'],
-                'adhesions' => ['view', 'approve', 'reject'],
-                'actualites' => ['view', 'create', 'edit', 'publish'],
-                'actions' => ['view', 'create', 'edit'],
-                'membres' => ['view', 'create', 'edit'],
-                'partenaires' => ['view', 'create', 'edit'],
-                'evenements' => ['view', 'create', 'edit'],
-                'projets' => ['view', 'create', 'edit'],
-                'documents' => ['view', 'upload']
-            ],
-            'moderateur' => [
-                'dashboard' => ['view'],
-                'messages' => ['view'],
-                'adhesions' => ['view'],
-                'actualites' => ['view', 'create'],
-                'actions' => ['view'],
-                'membres' => ['view'],
-                'partenaires' => ['view'],
-                'evenements' => ['view'],
-                'projets' => ['view'],
-                'documents' => ['view']
-            ],
-            'tresorier' => [
-                'dashboard' => ['view'],
-                'cotisations' => ['view', 'manage']
-            ]
+        $acces = [
+            'dashboard' => ['super_admin', 'admin', 'agent'],
+            'demandes' => ['super_admin', 'admin', 'agent'],
+            'registre' => ['super_admin', 'admin', 'agent'],
+            'messages' => ['super_admin', 'admin'],
+            'actualites' => ['super_admin', 'admin'],
+            'guide' => ['super_admin', 'admin'],
+            'partenaires' => ['super_admin', 'admin'],
+            'configuration' => ['super_admin', 'admin'],
+            'utilisateurs' => ['super_admin'],
+            'journal' => ['super_admin'],
         ];
 
-        return $permissions[$role] ?? [];
+        return array_map(
+            fn (array $roles) => in_array($role, $roles, true),
+            $acces
+        );
     }
 
     /**

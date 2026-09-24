@@ -18,6 +18,12 @@ class TestAdminSeeder extends Seeder
 {
     public function run(): void
     {
+        // Garde-fou : ce compte a un mot de passe connu de tous.
+        if (app()->isProduction()) {
+            $this->command?->error('TestAdminSeeder refusé en production.');
+            return;
+        }
+
         $email = 'test@ajdcb.org';
         $password = 'Test1234!';
 
