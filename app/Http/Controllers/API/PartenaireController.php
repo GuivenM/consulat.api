@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Partenaire;
+use App\Support\Staff;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
@@ -26,7 +27,10 @@ class PartenaireController extends Controller
                 $query->where('niveau_partenariat', $request->niveau_partenariat);
             }
 
-            if ($request->has('statut')) {
+            // Le filtre ?statut= n'est honoré que pour le personnel connecté
+            // (écran admin : actifs et inactifs). Le public ne voit jamais
+            // que les partenaires actifs, même en forçant le paramètre.
+            if ($request->has('statut') && Staff::est($request)) {
                 $query->where('statut', $request->statut);
             } else {
                 // Par défaut, ne montrer que les partenaires actifs sur les
@@ -52,10 +56,16 @@ class PartenaireController extends Controller
     /**
      * Afficher un partenaire spécifique
      */
-    public function show($id)
+    public function show(Request $request, $id)
     {
         try {
-            $partenaire = Partenaire::findOrFail($id);
+            $query = Partenaire::query();
+
+            if (!Staff::est($request)) {
+                $query->actif();
+            }
+
+            $partenaire = $query->findOrFail($id);
 
             return response()->json([
                 'success' => true,

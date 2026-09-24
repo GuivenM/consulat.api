@@ -46,9 +46,10 @@ Route::prefix('v1')->group(function () {
     // Créer un message (PUBLIC)
     Route::post('/messages', [MessageController::class, 'store']);
     
-    // Voir un message spécifique (PUBLIC si vous voulez)
-    Route::get('/messages/{id}', [MessageController::class, 'show']);
-    
+    // NB : la lecture d'un message (GET /messages/{id}) n'est volontairement
+    // PAS publique — elle contient nom, email, téléphone et texte de
+    // l'expéditeur. Elle est déclarée dans le groupe protégé plus bas.
+
     // Actualités - Routes publiques
     Route::get('/actualites', [ActualiteController::class, 'index']);
     Route::get('/actualites/type/{type}', [ActualiteController::class, 'getByType']);

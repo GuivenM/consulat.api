@@ -33,6 +33,16 @@ class GuideDocument extends Model
     /**
      * Relations
      */
+    /**
+     * Manquait : GuideController::index appelait ->publie() sur la relation
+     * des documents, ce qui levait BadMethodCallException (donc une 500 sur
+     * la route publique du guide) dès qu'on n'était pas en mode ?all=1.
+     */
+    public function scopePublie($query)
+    {
+        return $query->where('statut', 'publie');
+    }
+
     public function sousSection()
     {
         return $this->belongsTo(GuideSousSection::class, 'sous_section_id');

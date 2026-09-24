@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\GuideSection;
 use App\Models\GuideSousSection;
 use App\Models\GuideDocument;
+use App\Support\Staff;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
@@ -19,7 +20,9 @@ class GuideController extends Controller
     public function index(Request $request)
     {
         try {
-            $onlyPublished = !$request->boolean('all');
+            // ?all=1 (brouillons inclus) est réservé au personnel connecté :
+            // cette route est publique, le paramètre seul ne prouve rien.
+            $onlyPublished = !($request->boolean('all') && Staff::est($request));
 
             $query = GuideSection::with(['sousSections' => function ($q) use ($onlyPublished) {
                 if ($onlyPublished) {
@@ -64,7 +67,7 @@ class GuideController extends Controller
     public function showSection(Request $request, $id)
     {
         try {
-            $onlyPublished = !$request->boolean('all');
+            $onlyPublished = !($request->boolean('all') && Staff::est($request));
 
             $section = GuideSection::with(['sousSections' => function ($q) use ($onlyPublished) {
                 if ($onlyPublished) {
@@ -454,10 +457,17 @@ class GuideController extends Controller
      * Incrémente le compteur de téléchargements et renvoie l'URL du fichier.
      * Le front peut appeler cette route puis rediriger vers `download_url`.
      */
-    public function telechargerDocument($id)
+    public function telechargerDocument(Request $request, $id)
     {
         try {
-            $document = GuideDocument::findOrFail($id);
+            $query = GuideDocument::query();
+
+            // Un document non publié n'est pas téléchargeable par le public.
+            if (!Staff::est($request)) {
+                $query->publie();
+            }
+
+            $document = $query->findOrFail($id);
             $document->increment('telechargements');
 
             return response()->json([

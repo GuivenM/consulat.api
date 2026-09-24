@@ -10,16 +10,25 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use App\Services\ImageCompressionService;
+use App\Support\Staff;
 
 class ActualiteController extends Controller
 {
     /**
      * Afficher toutes les actualités
      */
-    public function index()
+    public function index(Request $request)
     {
         try {
-            $actualites = Actualite::with('photos')->orderBy('created_at', 'desc')->get();
+            $query = Actualite::with('photos')->orderBy('created_at', 'desc');
+
+            // Route publique : seules les actualités publiées, sauf pour le
+            // personnel connecté qui demande explicitement ?all=1 (écrans admin).
+            if (!($request->boolean('all') && Staff::est($request))) {
+                $query->publie();
+            }
+
+            $actualites = $query->get();
             
             return response()->json([
                 'success' => true,
@@ -93,10 +102,18 @@ class ActualiteController extends Controller
     /**
      * Afficher une actualité spécifique
      */
-    public function show($id)
+    public function show(Request $request, $id)
     {
         try {
-            $actualite = Actualite::with('photos')->findOrFail($id);
+            $query = Actualite::with('photos');
+
+            // Un brouillon n'existe pas pour le public (404, pas 403 : on ne
+            // révèle même pas qu'il existe). Le personnel peut l'ouvrir.
+            if (!Staff::est($request)) {
+                $query->publie();
+            }
+
+            $actualite = $query->findOrFail($id);
             
             return response()->json([
                 'success' => true,
