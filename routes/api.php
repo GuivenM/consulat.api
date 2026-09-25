@@ -15,6 +15,7 @@ use App\Http\Controllers\API\JournalActiviteController;
 use App\Http\Controllers\ImageController;
 use App\Http\Controllers\API\RessortissantAuthController;
 use App\Http\Controllers\API\DemandeController;
+use App\Http\Controllers\API\DashboardController;
 use App\Http\Controllers\API\DemandeAdminController;
 use App\Http\Controllers\API\PaiementAdminController;
 use App\Http\Controllers\API\RessortissantAdminController;
@@ -247,6 +248,9 @@ Route::prefix('v1/ressortissant')->middleware('auth:sanctum')->group(function ()
 });
 
 // Espace admin/agent
+Route::get('/v1/admin/dashboard', [DashboardController::class, 'index'])
+    ->middleware(['auth:sanctum', 'role:super_admin,admin,agent']);
+
 Route::prefix('v1/admin/demandes')->middleware(['auth:sanctum', 'role:super_admin,admin,agent'])->group(function () {
     Route::get('/', [DemandeAdminController::class, 'index']);
     Route::get('/{id}', [DemandeAdminController::class, 'show']);
