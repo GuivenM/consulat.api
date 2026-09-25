@@ -18,6 +18,7 @@ use App\Http\Controllers\API\DemandeController;
 use App\Http\Controllers\API\DashboardController;
 use App\Http\Controllers\API\DemandeAdminController;
 use App\Http\Controllers\API\PaiementAdminController;
+use App\Http\Controllers\API\PaiementEnLigneController;
 use App\Http\Controllers\API\RessortissantAdminController;
 use App\Http\Controllers\API\TarifController;
 use App\Http\Controllers\API\DocumentTypeRequisController;
@@ -96,13 +97,14 @@ Route::prefix('v1')->group(function () {
     ]));
 });
 
-// NOTE : le paiement FedaPay des billets d'événement (AJDCB) et son webhook
-// ont été retirés avec PaiementController — cassés (référençaient Membre et
-// Cotisation, supprimés) et hors périmètre V1 (l'Agenda est une simple liste
-// en V1, sans inscription ni billetterie — cf. document du projet, V2 pour
-// le calendrier avec inscription). Le webhook FedaPay sera reconstruit pour
-// le paiement en ligne des demandes consulaires (voir Paiement::CANAUX,
-// FedaPayService, déjà prêts côté modèle).
+// Webhook FedaPay pour le paiement en ligne des demandes consulaires (voir
+// Paiement::CANAUX, FedaPayService, PaiementEnLigneController). Public et
+// non authentifié par nature (appelé par FedaPay), la sécurité vient de la
+// vérification de signature dans FedaPayService::verifierWebhook — jamais
+// d'autre garde ici. Remplace l'ancienne intégration FedaPay des billets
+// d'événement AJDCB, retirée avec PaiementController (cassée, hors
+// périmètre V1 : l'Agenda est une simple liste sans billetterie).
+Route::post('/webhooks/fedapay', [PaiementEnLigneController::class, 'webhook']);
 
 // Routes pour les images (PUBLIQUES - sans authentification)
 Route::prefix('images')->group(function () {
@@ -245,6 +247,12 @@ Route::prefix('v1/ressortissant')->middleware('auth:sanctum')->group(function ()
     Route::get('/demandes/{id}', [DemandeController::class, 'show']);
     Route::post('/demandes/{id}/documents', [DemandeController::class, 'uploadDocument']);
     Route::delete('/demandes/{id}/documents/{documentId}', [DemandeController::class, 'supprimerDocument']);
+
+    // Paiement en ligne FedaPay. Le webhook (source de vérité) est en
+    // dehors de ce groupe, plus bas, puisqu'il est appelé par FedaPay et
+    // non par un ressortissant connecté — voir PaiementEnLigneController.
+    Route::post('/demandes/{id}/paiement-en-ligne', [PaiementEnLigneController::class, 'initier']);
+    Route::post('/paiements/{transactionId}/verifier', [PaiementEnLigneController::class, 'verifier']);
 });
 
 // Espace admin/agent
