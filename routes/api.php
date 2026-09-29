@@ -274,6 +274,16 @@ Route::prefix('v1/admin/demandes')->middleware(['auth:sanctum', 'role:super_admi
     Route::post('/{demandeId}/paiement-guichet', [PaiementAdminController::class, 'encaisser']);
 });
 
+// Paiements : reçu imprimable et récapitulatif de caisse. Groupe séparé
+// (plutôt que dans v1/admin/demandes) car un paiement se consulte aussi
+// hors du contexte d'un dossier précis (clôture de caisse en fin de
+// journée). Ouvert aux agents : ce sont eux qui tiennent le guichet et
+// doivent pouvoir réimprimer un reçu ou clôturer leur caisse.
+Route::prefix('v1/admin/paiements')->middleware(['auth:sanctum', 'role:super_admin,admin,agent'])->group(function () {
+    Route::get('/recapitulatif', [PaiementAdminController::class, 'recapitulatif']);
+    Route::get('/{id}', [PaiementAdminController::class, 'show']);
+});
+
 // Registre consulaire — consultation admin/agent (l'inscription reste en
 // self-service côté ressortissant, voir /v1/ressortissant/auth/inscrire).
 Route::prefix('v1/admin/ressortissants')->middleware(['auth:sanctum', 'role:super_admin,admin,agent'])->group(function () {
@@ -282,6 +292,10 @@ Route::prefix('v1/admin/ressortissants')->middleware(['auth:sanctum', 'role:supe
     Route::get('/carte', [RessortissantAdminController::class, 'carte']);
     Route::get('/export', [RessortissantAdminController::class, 'export']);
     Route::get('/{id}', [RessortissantAdminController::class, 'show']);
+    // Correction de fiche et changement de statut : réservé à admin/super_admin,
+    // l'agent reste en lecture seule sur le registre (cohérent avec le menu).
+    Route::patch('/{id}', [RessortissantAdminController::class, 'update'])
+        ->middleware('role:super_admin,admin');
 });
 
 // Grille tarifaire et pièces requises par type de demande — configuration

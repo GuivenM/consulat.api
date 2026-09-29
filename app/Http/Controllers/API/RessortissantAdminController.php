@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\JournalActivite;
 use App\Models\Ressortissant;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 /**
  * Espace admin/agent : consultation du registre consulaire. L'inscription
@@ -81,6 +84,105 @@ class RessortissantAdminController extends Controller
         return response()->json([
             'success' => true,
             'data' => $donnees,
+        ]);
+    }
+
+    /**
+     * Corrige une fiche (état civil, coordonnées) et/ou change son statut.
+     * Deux usages distincts, réunis pour éviter deux allers-retours quand
+     * un agent corrige une fiche ET la réactive dans le même geste :
+     * - correction : les champs fournis sont ceux d'un formulaire classique
+     *   (le ressortissant reste seul maître de son inscription initiale,
+     *   voir RessortissantAuthController ; ceci ne fait que corriger).
+     * - statut : passer en `inactif`/`suspendu` exige un motif, tracé dans
+     *   `motif_inactivation` et dans le journal. Revenir à `actif` l'efface.
+     *
+     * Ni le numéro de registre, ni l'email/mot de passe ne se changent ici
+     * (voir RessortissantAuthController pour le compte du ressortissant).
+     */
+    public function update(Request $request, int $id)
+    {
+        $ressortissant = Ressortissant::find($id);
+
+        if (!$ressortissant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ressortissant introuvable',
+            ], 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'nom' => 'sometimes|string|max:100',
+            'prenom' => 'sometimes|string|max:100',
+            'sexe' => 'sometimes|nullable|in:M,F',
+            'date_naissance' => 'sometimes|nullable|date',
+            'lieu_naissance' => 'sometimes|nullable|string|max:150',
+            'nationalite' => 'sometimes|nullable|string|max:100',
+            'profession' => 'sometimes|nullable|string|max:150',
+            'situation_matrimoniale' => 'sometimes|nullable|string|max:50',
+            'type_piece' => 'sometimes|nullable|string|max:50',
+            'numero_piece' => 'sometimes|nullable|string|max:100',
+            'date_expiration_piece' => 'sometimes|nullable|date',
+            'telephone' => 'sometimes|nullable|string|max:30',
+            'whatsapp' => 'sometimes|nullable|string|max:30',
+            'ville' => 'sometimes|nullable|string|max:100',
+            'quartier' => 'sometimes|nullable|string|max:150',
+            'adresse' => 'sometimes|nullable|string|max:255',
+            'contact_urgence_nom' => 'sometimes|nullable|string|max:150',
+            'contact_urgence_telephone' => 'sometimes|nullable|string|max:30',
+            'statut' => ['sometimes', Rule::in(['actif', 'inactif', 'suspendu'])],
+            'motif_inactivation' => 'sometimes|nullable|string|max:500',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $donnees = $validator->validated();
+        $changeStatut = array_key_exists('statut', $donnees) && $donnees['statut'] !== $ressortissant->statut;
+        $ancienStatut = $ressortissant->statut;
+
+        if ($changeStatut && $donnees['statut'] !== 'actif' && empty($donnees['motif_inactivation'])) {
+            return response()->json([
+                'success' => false,
+                'errors' => ['motif_inactivation' => ['Un motif est requis pour passer ce compte en ' . $donnees['statut'] . '.']],
+            ], 422);
+        }
+
+        // Revenir à actif efface le motif : sinon une réactivation garderait
+        // affiché un motif de suspension qui ne s'applique plus.
+        if ($changeStatut && $donnees['statut'] === 'actif') {
+            $donnees['motif_inactivation'] = null;
+        }
+
+        $champsCorriges = array_diff(array_keys($donnees), ['statut', 'motif_inactivation']);
+
+        $ressortissant->update($donnees);
+
+        if ($changeStatut) {
+            JournalActivite::enregistrer(
+                'ressortissant.statut',
+                "Statut de {$ressortissant->nom_complet} ({$ressortissant->numero_registre}) : {$ancienStatut} → {$donnees['statut']}"
+                    . (!empty($donnees['motif_inactivation']) ? " — motif : {$donnees['motif_inactivation']}" : ''),
+                $ressortissant
+            );
+        }
+
+        if (!empty($champsCorriges)) {
+            JournalActivite::enregistrer(
+                'ressortissant.correction',
+                "Fiche de {$ressortissant->nom_complet} ({$ressortissant->numero_registre}) corrigée : " . implode(', ', $champsCorriges),
+                $ressortissant
+            );
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Fiche mise à jour.',
+            'data' => $this->formater($ressortissant->fresh(), detaille: true),
         ]);
     }
 
