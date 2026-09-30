@@ -26,6 +26,7 @@ class Realisation extends Model
         'rubrique',
         'titre',
         'description',
+        'contenu',
         'photo',
         'date_realisation',
         'publie',
@@ -38,11 +39,27 @@ class Realisation extends Model
         'ordre' => 'integer',
     ];
 
-    protected $appends = ['photo_url', 'rubrique_label'];
+    protected $appends = ['photo_url', 'rubrique_label', 'photos_urls'];
+
+    public function photos()
+    {
+        return $this->hasMany(RealisationPhoto::class)->orderBy('ordre');
+    }
 
     public function getPhotoUrlAttribute()
     {
         return $this->photo ? Storage::disk('public')->url($this->photo) : null;
+    }
+
+    /**
+     * Toutes les images de la réalisation (couverture d'abord, puis galerie),
+     * pour la page de détail. Charger `photos` en amont pour éviter les N+1.
+     */
+    public function getPhotosUrlsAttribute()
+    {
+        $galerie = $this->photos->pluck('url')->filter()->values()->all();
+
+        return $this->photo_url ? array_merge([$this->photo_url], $galerie) : $galerie;
     }
 
     public function getRubriqueLabelAttribute()

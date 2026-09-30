@@ -7,6 +7,7 @@ use App\Models\JournalActivite;
 use App\Models\Ressortissant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use App\Support\Quartiers;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -145,6 +146,9 @@ class RessortissantAdminController extends Controller
         }
 
         $donnees = $validator->validated();
+        if (array_key_exists('quartier', $donnees)) {
+            $donnees['quartier'] = Quartiers::normaliser($donnees['ville'] ?? $ressortissant->ville, $donnees['quartier']);
+        }
         $changeStatut = array_key_exists('statut', $donnees) && $donnees['statut'] !== $ressortissant->statut;
         $ancienStatut = $ressortissant->statut;
 

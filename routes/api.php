@@ -6,6 +6,7 @@ use App\Http\Controllers\API\ActualiteController;
 use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\GuideController;
 use App\Http\Controllers\API\PartenaireController;
+use App\Http\Controllers\API\QuartierController;
 use App\Http\Controllers\API\RealisationController;
 use App\Http\Controllers\API\NewsletterController;
 use App\Http\Controllers\API\StatistiquesPubliquesController;
@@ -77,6 +78,7 @@ Route::prefix('v1')->group(function () {
     // Réalisations de la communauté / Culture & patrimoine - Routes publiques
     // (entrées publiées uniquement ; filtre ?rubrique=communaute|culture_patrimoine)
     Route::get('/realisations', [RealisationController::class, 'index']);
+    Route::get('/realisations/{id}', [RealisationController::class, 'show'])->whereNumber('id');
 
     // Newsletter - Inscription publique (footer et autres pages)
     Route::post('/newsletter', [NewsletterController::class, 'store']);
@@ -100,6 +102,10 @@ Route::prefix('v1')->group(function () {
         'success' => true,
         'data' => Ressortissant::VILLES_BENIN,
     ]));
+
+    // Quartiers d'une commune (?ville=Cotonou). Liste vide = pas de liste
+    // pour cette commune (le formulaire retombe sur une saisie libre).
+    Route::get('/quartiers', [QuartierController::class, 'index']);
 });
 
 // Webhook FedaPay pour le paiement en ligne des demandes consulaires (voir

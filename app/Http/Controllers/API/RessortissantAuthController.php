@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
+use App\Support\Quartiers;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -115,6 +116,7 @@ class RessortissantAuthController extends Controller
         $entity = CurrentEntity::resolve();
         $donnees = $validator->validated();
         unset($donnees['piece_fichier']);
+        $donnees['quartier'] = Quartiers::normaliser($donnees['ville'] ?? null, $donnees['quartier'] ?? null);
         $donnees['nationalite'] = $donnees['nationalite'] ?? $entity->pays_represente;
         $donnees['possede_carte_consulaire'] = filter_var($donnees['possede_carte_consulaire'], FILTER_VALIDATE_BOOLEAN);
         if (!$donnees['possede_carte_consulaire']) {
