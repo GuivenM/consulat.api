@@ -24,6 +24,7 @@ class ServicesPubliqueController extends Controller
         $tarifsParType = Tarif::actif()
             ->get()
             ->groupBy('type_demande')
+            ->order_by('delai_heures')
             ->map(function ($tarifs) {
                 return [
                     'devise' => $tarifs->first()->devise,
