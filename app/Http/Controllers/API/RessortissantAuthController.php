@@ -9,6 +9,7 @@ use App\Support\CurrentEntity;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -41,9 +42,13 @@ class RessortissantAuthController extends Controller
             'profession' => 'nullable|string|max:150',
             'situation_matrimoniale' => 'nullable|in:celibataire,marie,divorce,veuf',
 
-            'type_piece' => 'nullable|in:passeport,cni,carte_consulaire,autre',
+            'type_piece' => ['required', 'in:' . implode(',', array_keys(Ressortissant::TYPES_PIECE))],
             'numero_piece' => 'nullable|string|max:50',
             'date_expiration_piece' => 'nullable|date|after:today',
+            'piece_fichier' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
+
+            'possede_carte_consulaire' => 'required|boolean',
+            'numero_carte_consulaire' => 'nullable|string|max:50',
 
             'whatsapp' => 'nullable|string|max:30',
             'telephone' => 'nullable|string|max:30',
@@ -75,6 +80,11 @@ class RessortissantAuthController extends Controller
             'between' => 'Le champ :attribute doit être compris entre :min et :max.',
             'password.min' => 'Le mot de passe doit contenir au moins 8 caractères.',
             'password.confirmed' => 'La confirmation du mot de passe ne correspond pas.',
+            'piece_fichier.required' => "Joignez la copie de votre pièce d'identité (PDF ou image).",
+            'piece_fichier.mimes' => "La pièce doit être un fichier PDF, JPG ou PNG.",
+            'piece_fichier.max' => 'La pièce ne doit pas dépasser 5 Mo.',
+            'piece_fichier.uploaded' => "Le fichier n'a pas pu être envoyé (5 Mo maximum).",
+            'possede_carte_consulaire.required' => 'Indiquez si vous possédez la carte consulaire.',
         ], [
             'nom' => 'nom',
             'prenom' => 'prénom',
@@ -83,6 +93,9 @@ class RessortissantAuthController extends Controller
             'type_piece' => 'type de pièce',
             'numero_piece' => 'numéro de pièce',
             'date_expiration_piece' => "date d'expiration de la pièce",
+            'piece_fichier' => "pièce d'identité",
+            'possede_carte_consulaire' => 'carte consulaire',
+            'numero_carte_consulaire' => 'numéro de carte consulaire',
             'whatsapp' => 'numéro WhatsApp',
             'telephone' => 'téléphone',
             'quartier' => 'quartier',
@@ -101,7 +114,19 @@ class RessortissantAuthController extends Controller
 
         $entity = CurrentEntity::resolve();
         $donnees = $validator->validated();
+        unset($donnees['piece_fichier']);
         $donnees['nationalite'] = $donnees['nationalite'] ?? $entity->pays_represente;
+        $donnees['possede_carte_consulaire'] = filter_var($donnees['possede_carte_consulaire'], FILTER_VALIDATE_BOOLEAN);
+        if (!$donnees['possede_carte_consulaire']) {
+            $donnees['numero_carte_consulaire'] = null;
+        }
+
+        // Pièce d'identité sur le disque privé (jamais public : elle ne
+        // se consulte que depuis l'espace admin).
+        $fichier = $request->file('piece_fichier');
+        $cheminPiece = $fichier->store("ressortissants/{$entity->id}/pieces", 'local');
+        $donnees['piece_fichier'] = $cheminPiece;
+        $donnees['piece_fichier_nom'] = mb_substr($fichier->getClientOriginalName(), 0, 255);
         $donnees['password'] = Hash::make($donnees['password']);
         $donnees['statut'] = 'actif';
         $donnees['activation_token'] = Str::random(64);
@@ -110,6 +135,7 @@ class RessortissantAuthController extends Controller
         try {
             $ressortissant = Ressortissant::create($donnees);
         } catch (\Exception $e) {
+            Storage::disk('local')->delete($cheminPiece);
             \Log::error('Erreur création ressortissant: ' . $e->getMessage());
 
             return response()->json([

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\JournalActivite;
 use App\Models\Ressortissant;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -120,8 +121,10 @@ class RessortissantAdminController extends Controller
             'nationalite' => 'sometimes|nullable|string|max:100',
             'profession' => 'sometimes|nullable|string|max:150',
             'situation_matrimoniale' => 'sometimes|nullable|string|max:50',
-            'type_piece' => 'sometimes|nullable|string|max:50',
+            'type_piece' => ['sometimes', 'nullable', Rule::in(array_keys(Ressortissant::TYPES_PIECE))],
             'numero_piece' => 'sometimes|nullable|string|max:100',
+            'possede_carte_consulaire' => 'sometimes|nullable|boolean',
+            'numero_carte_consulaire' => 'sometimes|nullable|string|max:50',
             'date_expiration_piece' => 'sometimes|nullable|date',
             'telephone' => 'sometimes|nullable|string|max:30',
             'whatsapp' => 'sometimes|nullable|string|max:30',
@@ -247,6 +250,32 @@ class RessortissantAdminController extends Controller
     }
 
     /**
+     * Affiche la pièce d'identité jointe à l'inscription (disque privé).
+     *
+     * GET /v1/admin/ressortissants/{id}/piece
+     */
+    public function piece(int $id)
+    {
+        $ressortissant = Ressortissant::find($id);
+
+        if (!$ressortissant || !$ressortissant->piece_fichier
+            || !Storage::disk('local')->exists($ressortissant->piece_fichier)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pièce introuvable',
+            ], 404);
+        }
+
+        $nom = $ressortissant->piece_fichier_nom ?: basename($ressortissant->piece_fichier);
+
+        return Storage::disk('local')->response(
+            $ressortissant->piece_fichier,
+            $nom,
+            ['Content-Disposition' => 'inline; filename="' . addslashes($nom) . '"']
+        );
+    }
+
+    /**
      * Export CSV du registre (espace admin), filtrable par statut.
      *
      * GET /v1/admin/ressortissants/export?statut=actif|inactif|suspendu
@@ -266,7 +295,8 @@ class RessortissantAdminController extends Controller
             fwrite($handle, "\xEF\xBB\xBF");
             fputcsv($handle, [
                 'N° registre', 'Nom', 'Prénom', 'Sexe', 'Date de naissance', 'Nationalité',
-                'Téléphone', 'WhatsApp', 'Email', 'Ville', 'Quartier', 'Statut', 'Inscrit le',
+                'Téléphone', 'WhatsApp', 'Email', 'Ville', 'Quartier', 'Type de pièce', 'N° pièce',
+                'Carte consulaire', 'Statut', 'Inscrit le',
             ], ';');
 
             foreach ($ressortissants as $r) {
@@ -282,6 +312,9 @@ class RessortissantAdminController extends Controller
                     $r->email ?? '',
                     $r->ville ?? '',
                     $r->quartier ?? '',
+                    Ressortissant::TYPES_PIECE[$r->type_piece] ?? '',
+                    $r->numero_piece ?? '',
+                    is_null($r->possede_carte_consulaire) ? '' : ($r->possede_carte_consulaire ? 'Oui' : 'Non'),
                     $r->statut,
                     $r->created_at->format('d/m/Y'),
                 ], ';');
@@ -322,6 +355,10 @@ class RessortissantAdminController extends Controller
                 'situation_matrimoniale' => $r->situation_matrimoniale,
                 'type_piece' => $r->type_piece,
                 'numero_piece' => $r->numero_piece,
+                'piece_fichier_disponible' => $r->piece_fichier_disponible,
+                'piece_fichier_nom' => $r->piece_fichier_nom,
+                'possede_carte_consulaire' => $r->possede_carte_consulaire,
+                'numero_carte_consulaire' => $r->numero_carte_consulaire,
                 'date_expiration_piece' => $r->date_expiration_piece?->format('d/m/Y'),
                 'adresse' => $r->adresse,
                 'latitude' => $r->latitude,

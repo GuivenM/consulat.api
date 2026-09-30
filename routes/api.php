@@ -6,6 +6,7 @@ use App\Http\Controllers\API\ActualiteController;
 use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\GuideController;
 use App\Http\Controllers\API\PartenaireController;
+use App\Http\Controllers\API\RealisationController;
 use App\Http\Controllers\API\NewsletterController;
 use App\Http\Controllers\API\StatistiquesPubliquesController;
 use App\Http\Controllers\API\CartePubliqueController;
@@ -72,6 +73,10 @@ Route::prefix('v1')->group(function () {
     // Partenaires - Routes publiques (consultation)
     Route::get('/partenaires', [PartenaireController::class, 'index']);
     Route::get('/partenaires/{id}', [PartenaireController::class, 'show']);
+
+    // Réalisations de la communauté / Culture & patrimoine - Routes publiques
+    // (entrées publiées uniquement ; filtre ?rubrique=communaute|culture_patrimoine)
+    Route::get('/realisations', [RealisationController::class, 'index']);
 
     // Newsletter - Inscription publique (footer et autres pages)
     Route::post('/newsletter', [NewsletterController::class, 'store']);
@@ -207,6 +212,18 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
             ->middleware('role:super_admin,admin');
     });
 
+    // ========== RÉALISATIONS ==========
+    // Lecture : déjà publique. Créer/modifier : admin/super_admin.
+    // Supprimer : super_admin uniquement.
+    Route::prefix('realisations')->group(function () {
+        Route::post('/', [RealisationController::class, 'store'])
+            ->middleware('role:super_admin,admin');
+        Route::put('/{id}', [RealisationController::class, 'update'])
+            ->middleware('role:super_admin,admin');
+        Route::delete('/{id}', [RealisationController::class, 'destroy'])
+            ->middleware('role:super_admin');
+    });
+
     // ========== PARTENAIRES ==========
     // Lecture : déjà publique (partenaires actifs uniquement, sauf filtre explicite).
     // Créer/modifier : admin/super_admin. Supprimer : super_admin uniquement.
@@ -292,6 +309,7 @@ Route::prefix('v1/admin/ressortissants')->middleware(['auth:sanctum', 'role:supe
     Route::get('/carte', [RessortissantAdminController::class, 'carte']);
     Route::get('/export', [RessortissantAdminController::class, 'export']);
     Route::get('/{id}', [RessortissantAdminController::class, 'show']);
+    Route::get('/{id}/piece', [RessortissantAdminController::class, 'piece']);
     // Correction de fiche et changement de statut : réservé à admin/super_admin,
     // l'agent reste en lecture seule sur le registre (cohérent avec le menu).
     Route::patch('/{id}', [RessortissantAdminController::class, 'update'])

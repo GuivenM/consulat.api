@@ -39,6 +39,10 @@ class Ressortissant extends Authenticatable
         'type_piece',
         'numero_piece',
         'date_expiration_piece',
+        'piece_fichier',
+        'piece_fichier_nom',
+        'possede_carte_consulaire',
+        'numero_carte_consulaire',
         'whatsapp',
         'telephone',
         'ville',
@@ -62,12 +66,16 @@ class Ressortissant extends Authenticatable
     protected $hidden = [
         'password',
         'activation_token',
+        // Chemin du fichier sur le disque privé : jamais exposé, le fichier
+        // ne se télécharge que via la route admin dédiée.
+        'piece_fichier',
     ];
 
     protected $casts = [
         'date_naissance' => 'date',
         'date_expiration_piece' => 'date',
         'date_arrivee' => 'date',
+        'possede_carte_consulaire' => 'boolean',
         'latitude' => 'decimal:7',
         'longitude' => 'decimal:7',
         'email_verified_at' => 'datetime',
@@ -77,7 +85,18 @@ class Ressortissant extends Authenticatable
         'updated_at' => 'datetime',
     ];
 
-    protected $appends = ['nom_complet', 'photo_url', 'inscription_verifiee'];
+    protected $appends = ['nom_complet', 'photo_url', 'inscription_verifiee', 'piece_fichier_disponible'];
+
+    /**
+     * Types de pièce d'identité acceptés à l'inscription (code => libellé).
+     */
+    public const TYPES_PIECE = [
+        'passeport' => 'Passeport',
+        'cni' => "Carte nationale d'identité",
+        'cip_etranger' => 'CIP Étranger',
+        'carte_consulaire' => 'Carte consulaire',
+        'autre' => 'Autre',
+    ];
 
     /**
      * Les 77 communes du Bénin (source : Wikipédia / decentralisation.gouv.bj),
@@ -123,6 +142,11 @@ class Ressortissant extends Authenticatable
     public function getPhotoUrlAttribute()
     {
         return $this->photo ? Storage::disk('public')->url($this->photo) : null;
+    }
+
+    public function getPieceFichierDisponibleAttribute()
+    {
+        return !empty($this->attributes['piece_fichier'] ?? null);
     }
 
     public function getInscriptionVerifieeAttribute()
