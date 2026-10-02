@@ -58,7 +58,9 @@ Route::prefix('v1')->group(function () {
     Route::get('/actualites', [ActualiteController::class, 'index']);
     Route::get('/actualites/type/{type}', [ActualiteController::class, 'getByType']);
     Route::get('/actualites/dernieres', [ActualiteController::class, 'dernieresActualites']);
-    Route::get('/actualites/{id}', [ActualiteController::class, 'show']);
+    // whereNumber : sans lui, /actualites/statistiques (route staff, plus bas)
+    // était interceptée ici et répondait 404, même pour un super_admin.
+    Route::get('/actualites/{id}', [ActualiteController::class, 'show'])->whereNumber('id');
 
     // NOTE : pas de routes /evenements séparées. L'Agenda (V1) affiche les
     // Actualités de type "evenement" (voir ActualiteController::getByType) —
