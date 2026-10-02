@@ -40,15 +40,15 @@ Route::get('/test', function() {
 
 // Auth (espace admin)
 Route::prefix('auth')->group(function () {
-    Route::post('/login', [AuthController::class, 'login']);
-    Route::post('/activer-compte-admin', [AuthController::class, 'activerCompteAdmin']);
-    Route::post('/mot-de-passe-oublie', [AuthController::class, 'motDePasseOublie']);
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
+    Route::post('/activer-compte-admin', [AuthController::class, 'activerCompteAdmin'])->middleware('throttle:token-link');
+    Route::post('/mot-de-passe-oublie', [AuthController::class, 'motDePasseOublie'])->middleware('throttle:email-send');
 });
 
 // Messages - Routes publiques (création et consultation publique)
 Route::prefix('v1')->group(function () {
     // Créer un message (PUBLIC)
-    Route::post('/messages', [MessageController::class, 'store']);
+    Route::post('/messages', [MessageController::class, 'store'])->middleware('throttle:public-form');
     
     // NB : la lecture d'un message (GET /messages/{id}) n'est volontairement
     // PAS publique — elle contient nom, email, téléphone et texte de
@@ -81,7 +81,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/realisations/{id}', [RealisationController::class, 'show'])->whereNumber('id');
 
     // Newsletter - Inscription publique (footer et autres pages)
-    Route::post('/newsletter', [NewsletterController::class, 'store']);
+    Route::post('/newsletter', [NewsletterController::class, 'store'])->middleware('throttle:public-form');
 
     // Statistiques publiques - Chiffres clés réels pour la page d'accueil
     Route::get('/statistiques-publiques', [StatistiquesPubliquesController::class, 'index']);
@@ -125,7 +125,9 @@ Route::prefix('images')->group(function () {
 
 // ==================== ROUTES PROTÉGÉES (NÉCESSITENT AUTH) ====================
 // Rôles disponibles : super_admin, admin, agent (voir User::ROLES)
-Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
+// 'actor:staff' : sans lui, auth:sanctum accepte aussi les tokens des
+// ressortissants (même mécanisme Sanctum) — ils pouvaient lire /messages.
+Route::middleware(['auth:sanctum', 'actor:staff'])->prefix('v1')->group(function () {
 
     // Auth supplémentaires
     Route::prefix('auth')->group(function () {
@@ -139,9 +141,12 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
     // ========== MESSAGES ==========
     // Lecture : les 3 rôles. Répondre : admin/super_admin. Supprimer : super_admin uniquement.
     Route::prefix('messages')->group(function () {
-        Route::get('/', [MessageController::class, 'index']);
-        Route::get('/statistiques', [MessageController::class, 'statistiques']);
-        Route::get('/{id}', [MessageController::class, 'show']);
+        Route::get('/', [MessageController::class, 'index'])
+            ->middleware('role:super_admin,admin,agent');
+        Route::get('/statistiques', [MessageController::class, 'statistiques'])
+            ->middleware('role:super_admin,admin,agent');
+        Route::get('/{id}', [MessageController::class, 'show'])
+            ->middleware('role:super_admin,admin,agent');
         Route::put('/{id}', [MessageController::class, 'update'])
             ->middleware('role:super_admin,admin');
         Route::post('/{id}/repondre', [MessageController::class, 'repondre'])
@@ -154,7 +159,8 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
     // Lecture : les 3 rôles. Créer : admin/super_admin. Modifier : admin/super_admin.
     // Supprimer : super_admin uniquement.
     Route::prefix('actualites')->group(function () {
-        Route::get('/statistiques', [ActualiteController::class, 'statistiques']);
+        Route::get('/statistiques', [ActualiteController::class, 'statistiques'])
+            ->middleware('role:super_admin,admin,agent');
         Route::post('/', [ActualiteController::class, 'store'])
             ->middleware('role:super_admin,admin');
         Route::put('/{id}', [ActualiteController::class, 'update'])
@@ -248,14 +254,14 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
 // ==================== ESPACE MEMBRE (RESSORTISSANT) ====================
 
 Route::prefix('v1/ressortissant/auth')->group(function () {
-    Route::post('/inscrire', [RessortissantAuthController::class, 'inscrire']);
-    Route::post('/verifier-email', [RessortissantAuthController::class, 'verifierEmail']);
-    Route::post('/renvoyer-verification', [RessortissantAuthController::class, 'renvoyerVerification']);
-    Route::post('/login', [RessortissantAuthController::class, 'login']);
-    Route::post('/mot-de-passe-oublie', [RessortissantAuthController::class, 'motDePasseOublie']);
-    Route::post('/reinitialiser-mot-de-passe', [RessortissantAuthController::class, 'reinitialiserMotDePasse']);
+    Route::post('/inscrire', [RessortissantAuthController::class, 'inscrire'])->middleware('throttle:public-form');
+    Route::post('/verifier-email', [RessortissantAuthController::class, 'verifierEmail'])->middleware('throttle:token-link');
+    Route::post('/renvoyer-verification', [RessortissantAuthController::class, 'renvoyerVerification'])->middleware('throttle:email-send');
+    Route::post('/login', [RessortissantAuthController::class, 'login'])->middleware('throttle:login');
+    Route::post('/mot-de-passe-oublie', [RessortissantAuthController::class, 'motDePasseOublie'])->middleware('throttle:email-send');
+    Route::post('/reinitialiser-mot-de-passe', [RessortissantAuthController::class, 'reinitialiserMotDePasse'])->middleware('throttle:token-link');
 
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware(['auth:sanctum', 'actor:ressortissant'])->group(function () {
         Route::post('/logout', [RessortissantAuthController::class, 'logout']);
         Route::get('/me', [RessortissantAuthController::class, 'me']);
         Route::post('/change-password', [RessortissantAuthController::class, 'changePassword']);
@@ -263,7 +269,7 @@ Route::prefix('v1/ressortissant/auth')->group(function () {
 });
 
 // Espace membre (ressortissant connecté)
-Route::prefix('v1/ressortissant')->middleware('auth:sanctum')->group(function () {
+Route::prefix('v1/ressortissant')->middleware(['auth:sanctum', 'actor:ressortissant'])->group(function () {
     Route::get('/demandes/configuration/{type}', [DemandeController::class, 'configuration']);
     Route::get('/demandes', [DemandeController::class, 'index']);
     Route::post('/demandes', [DemandeController::class, 'store']);

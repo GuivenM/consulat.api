@@ -19,7 +19,10 @@ class CheckRole
             ], 401);
         }
 
-        if (!in_array($user->role, $roles)) {
+        // Défense en profondeur : seuls les comptes staff (User) ont un rôle.
+        // Un token de Ressortissant ne doit jamais atteindre ce point avec
+        // un rôle exploitable, même si un attribut `role` apparaissait un jour.
+        if (!$user instanceof \App\Models\User || !in_array($user->role, $roles, true)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Accès non autorisé pour votre rôle'

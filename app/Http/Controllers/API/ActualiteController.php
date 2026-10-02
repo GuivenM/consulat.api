@@ -37,10 +37,10 @@ class ActualiteController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la récupération des actualités',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la récupération des actualités'
             ], 500);
         }
     }
@@ -64,10 +64,10 @@ class ActualiteController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la récupération des actualités',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la récupération des actualités'
             ], 500);
         }
     }
@@ -91,10 +91,10 @@ class ActualiteController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la récupération des actualités',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la récupération des actualités'
             ], 500);
         }
     }
@@ -186,10 +186,10 @@ class ActualiteController extends Controller
         ], 201);
         
     } catch (\Exception $e) {
+        report($e); // journalisé côté serveur, jamais renvoyé au client
         return response()->json([
             'success' => false,
-            'message' => 'Erreur lors de la création de l\'actualité',
-            'error' => $e->getMessage()
+            'message' => 'Erreur lors de la création de l\'actualité'
         ], 500);
     }
 }
@@ -266,10 +266,10 @@ class ActualiteController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la mise à jour de l\'actualité',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la mise à jour de l\'actualité'
             ], 500);
         }
     }
@@ -301,10 +301,10 @@ class ActualiteController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la suppression de l\'actualité',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la suppression de l\'actualité'
             ], 500);
         }
     }
@@ -353,10 +353,10 @@ class ActualiteController extends Controller
                 'message' => 'Actualité non trouvée',
             ], 404);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Échec de la publication sur Facebook',
-                'error' => $e->getMessage(),
+                'message' => 'Échec de la publication sur Facebook'
             ], 502);
         }
     }
@@ -400,10 +400,10 @@ class ActualiteController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la recherche',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la recherche'
             ], 500);
         }
     }
@@ -433,10 +433,10 @@ class ActualiteController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors du calcul des statistiques',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors du calcul des statistiques'
             ], 500);
         }
     }

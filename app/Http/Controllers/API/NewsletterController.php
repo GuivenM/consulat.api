@@ -59,10 +59,10 @@ class NewsletterController extends Controller
                 'data' => $abonne,
             ], 201);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de l\'inscription à la newsletter',
-                'error' => $e->getMessage(),
+                'message' => 'Erreur lors de l\'inscription à la newsletter'
             ], 500);
         }
     }

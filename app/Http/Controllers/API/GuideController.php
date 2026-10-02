@@ -132,10 +132,10 @@ class GuideController extends Controller
                 'data' => $section
             ], 201);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la création',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la création'
             ], 500);
         }
     }
@@ -186,10 +186,10 @@ class GuideController extends Controller
                 'data' => $section
             ]);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la mise à jour',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la mise à jour'
             ], 500);
         }
     }
@@ -258,10 +258,10 @@ class GuideController extends Controller
                 'data' => $sousSection
             ], 201);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la création',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la création'
             ], 500);
         }
     }
@@ -304,10 +304,10 @@ class GuideController extends Controller
                 'data' => $sousSection
             ]);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la mise à jour',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la mise à jour'
             ], 500);
         }
     }
@@ -372,10 +372,10 @@ class GuideController extends Controller
                 'data' => $document
             ], 201);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de l\'ajout du document',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de l\'ajout du document'
             ], 500);
         }
     }
@@ -422,10 +422,10 @@ class GuideController extends Controller
                 'data' => $document
             ]);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la mise à jour',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la mise à jour'
             ], 500);
         }
     }

@@ -30,10 +30,10 @@ class MessageController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la récupération des messages',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la récupération des messages'
             ], 500);
         }
     }
@@ -123,10 +123,10 @@ class MessageController extends Controller
             ], 201);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de l\'envoi du message',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de l\'envoi du message'
             ], 500);
         }
     }
@@ -159,10 +159,10 @@ class MessageController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la mise à jour du statut',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la mise à jour du statut'
             ], 500);
         }
     }
@@ -207,18 +207,18 @@ class MessageController extends Controller
                 ], 200);
                 
             } catch (\Exception $e) {
+                report($e); // journalisé côté serveur, jamais renvoyé au client
                 return response()->json([
                     'success' => false,
-                    'message' => 'Erreur lors de l\'envoi de la réponse',
-                    'error' => $e->getMessage()
+                    'message' => 'Erreur lors de l\'envoi de la réponse'
                 ], 500);
             }
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la réponse',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la réponse'
             ], 500);
         }
     }
@@ -239,10 +239,10 @@ class MessageController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la suppression du message',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la suppression du message'
             ], 500);
         }
     }
@@ -296,10 +296,10 @@ class MessageController extends Controller
             ], 201);
 
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la création du partenaire',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la création du partenaire'
             ], 500);
         }
     }
@@ -327,10 +327,10 @@ class MessageController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors du marquage du message',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors du marquage du message'
             ], 500);
         }
     }
@@ -410,10 +410,10 @@ class MessageController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la recherche',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la recherche'
             ], 500);
         }
     }
@@ -437,10 +437,10 @@ class MessageController extends Controller
             ], 200);
             
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors du calcul des statistiques',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors du calcul des statistiques'
             ], 500);
         }
     }

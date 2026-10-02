@@ -24,7 +24,7 @@ public function login(Request $request)
     try {
         $validator = Validator::make($request->all(), [
                 'email' => 'required|email',
-                'password' => 'required|string|min:6',
+                'password' => 'required|string',
                 'remember' => 'boolean'
             ]);
 
@@ -37,28 +37,27 @@ public function login(Request $request)
 
         $user = User::where('email', $request->email)->first();
 
-        // Vérifier si l'utilisateur existe
+        // Réponse unique pour « compte inconnu » et « mauvais mot de passe » :
+        // on ne révèle pas quels emails ont un compte. Si le compte n'existe
+        // pas, on fait quand même un hachage pour garder un temps de réponse
+        // comparable (sinon la latence trahit l'existence du compte).
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Aucun compte trouvé avec cet email'
-            ], 401);
+            Hash::make((string) $request->password);
+
+            return $this->identifiantsInvalides();
         }
 
-        // Vérifier si le compte est actif
+        if (!Hash::check($request->password, $user->password)) {
+            return $this->identifiantsInvalides();
+        }
+
+        // Le statut du compte n'est révélé qu'APRÈS un mot de passe correct,
+        // donc uniquement à quelqu'un qui connaît déjà les identifiants.
         if (!$user->est_actif) {
             return response()->json([
                 'success' => false,
                 'message' => 'Votre compte a été désactivé. Veuillez contacter l\'administrateur.'
             ], 403);
-        }
-
-        // Vérifier le mot de passe
-        if (!Hash::check($request->password, $user->password)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Mot de passe incorrect'
-            ], 401);
         }
 
         // Mettre à jour la dernière connexion - CORRECTION ICI
@@ -93,13 +92,21 @@ public function login(Request $request)
         ]);
 
     } catch (\Exception $e) {
+        report($e); // journalisé côté serveur, jamais renvoyé au client
         return response()->json([
             'success' => false,
-            'message' => 'Erreur lors de la connexion',
-            'error' => $e->getMessage()
+            'message' => 'Erreur lors de la connexion'
         ], 500);
     }
 }
+
+    private function identifiantsInvalides()
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Email ou mot de passe incorrect'
+        ], 401);
+    }
 
     /**
      * Activation d'un accès admin/agent créé par un super_admin
@@ -170,10 +177,10 @@ public function login(Request $request)
                 ]
             ]);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de l\'activation du compte',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de l\'activation du compte'
             ], 500);
         }
     }

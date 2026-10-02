@@ -275,10 +275,10 @@ class UtilisateurController extends Controller
                 'message' => 'Email d\'activation renvoyé à ' . $utilisateur->email,
             ]);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors du renvoi de l\'email d\'activation',
-                'error' => $e->getMessage(),
+                'message' => 'Erreur lors du renvoi de l\'email d\'activation'
             ], 500);
         }
     }

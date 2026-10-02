@@ -126,10 +126,10 @@ class PartenaireController extends Controller
                 'data' => $partenaire
             ], 201);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la création',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la création'
             ], 500);
         }
     }
@@ -186,10 +186,10 @@ class PartenaireController extends Controller
                 'data' => $partenaire
             ]);
         } catch (\Exception $e) {
+            report($e); // journalisé côté serveur, jamais renvoyé au client
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la mise à jour',
-                'error' => $e->getMessage()
+                'message' => 'Erreur lors de la mise à jour'
             ], 500);
         }
     }
