@@ -29,18 +29,37 @@ class NotificationNouveauMessage extends Mailable
             'partenariat' => '🤝 Partenariat',
             'service_consulaire' => '📋 Question sur une démarche',
             'urgence' => '⚠️ Urgence',
+            'audience' => "📅 Demande d'audience",
+            'sos' => '🆘 SOS',
             'autre' => '📝 Autre'
         ];
 
         $entite = $this->message->entity ?? CurrentEntity::resolve();
 
-        return $this->subject('📬 Nouveau message de contact — ' . ($entite->nom_court ?? $entite->nom))
+        $estSos = $this->message->objet === 'sos';
+        $nomEntite = $entite->nom_court ?? $entite->nom;
+        $expediteur = trim($this->message->prenom . ' ' . $this->message->nom);
+
+        $sujet = match ($this->message->objet) {
+            'sos' => '🆘 SOS — demande d\'aide urgente de ' . $expediteur,
+            'audience' => '📅 Demande d\'audience — ' . $expediteur,
+            default => '📬 Nouveau message de contact — ' . $nomEntite,
+        };
+
+        $mail = $this->subject($sujet)
                     ->view('emails.nouveau-message')
                     ->with([
                         'entite' => $entite,
                         'nom' => $this->message->nom,
                         'prenom' => $this->message->prenom,
-                        'email' => $this->message->email,
+                        'email' => $this->message->email ?: 'Non renseigné',
+                        'estSos' => $estSos,
+                        'dateSouhaitee' => $this->message->date_souhaitee?->format('d/m/Y'),
+                        'typeAide' => $this->message->type_aide_label,
+                        'localisation' => $this->message->localisation,
+                        'carteUrl' => ($this->message->latitude !== null && $this->message->longitude !== null)
+                            ? 'https://www.google.com/maps?q=' . $this->message->latitude . ',' . $this->message->longitude
+                            : null,
                         'telephone' => $this->message->telephone,
                         'objet' => $objetLabels[$this->message->objet] ?? $this->message->objet,
                         'contenu' => $this->message->message,
@@ -48,5 +67,11 @@ class NotificationNouveauMessage extends Mailable
                         'dashboardUrl' => $frontendUrl . '/admin/messages/' . $this->message->id,
                         'listeUrl' => $frontendUrl . '/admin/messages'
                     ]);
+
+        if ($estSos) {
+            $mail->priority(1); // importance haute dans la messagerie
+        }
+
+        return $mail;
     }
 }

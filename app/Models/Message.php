@@ -18,6 +18,18 @@ class Message extends Model
 
     protected $table = 'messages';
 
+    /**
+     * Types d'aide proposés par le formulaire SOS (code => libellé).
+     */
+    public const TYPES_AIDE = [
+        'perte_documents' => "Perte ou vol de documents (passeport, pièce d'identité)",
+        'arrestation' => 'Arrestation ou détention',
+        'sante' => 'Accident ou problème de santé',
+        'agression' => 'Agression ou situation de danger',
+        'ressources' => 'Difficulté financière ou de logement',
+        'autre' => 'Autre situation urgente',
+    ];
+
     protected $fillable = [
         'entity_id',
         'nom',
@@ -26,6 +38,11 @@ class Message extends Model
         'telephone',
         'objet',
         'message',
+        'date_souhaitee',
+        'type_aide',
+        'localisation',
+        'latitude',
+        'longitude',
         'organisation',
         'type_organisation',
         'secteur_activite',
@@ -43,6 +60,9 @@ class Message extends Model
     protected $casts = [
         'lu_le' => 'datetime',
         'date_reponse' => 'datetime',
+        'date_souhaitee' => 'date:Y-m-d',
+        'latitude' => 'float',
+        'longitude' => 'float',
         'created_at' => 'datetime',
         'updated_at' => 'datetime'
     ];
@@ -83,7 +103,7 @@ class Message extends Model
         return $query->where('objet', $objet);
     }
 
-    protected $appends = ['nom_complet', 'objet_label', 'statut_label', 'statut_color', 'date_envoi', 'date_envoi_fr', 'extrait'];
+    protected $appends = ['nom_complet', 'objet_label', 'statut_label', 'statut_color', 'date_envoi', 'date_envoi_fr', 'extrait', 'type_aide_label'];
 
     /**
      * Accesseurs
@@ -100,10 +120,17 @@ class Message extends Model
             'service_consulaire' => 'Question sur une démarche',
             'partenariat' => 'Demande de partenariat',
             'urgence' => 'Urgence communautaire',
+            'audience' => "Demande d'audience",
+            'sos' => 'SOS - demande d\'aide',
             'autre' => 'Autre'
         ];
 
         return $objets[$this->objet] ?? $this->objet;
+    }
+
+    public function getTypeAideLabelAttribute()
+    {
+        return self::TYPES_AIDE[$this->type_aide] ?? $this->type_aide;
     }
 
     public function getStatutLabelAttribute()

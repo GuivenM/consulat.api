@@ -184,6 +184,32 @@
                     <span class="info-value">{{ $telephone }}</span>
                 </div>
                 
+                @if($dateSouhaitee)
+                <div class="info-row">
+                    <span class="info-label">Date souhaitée</span>
+                    <span class="info-value">{{ $dateSouhaitee }}</span>
+                </div>
+                @endif
+
+                @if($typeAide)
+                <div class="info-row">
+                    <span class="info-label">Type d'aide</span>
+                    <span class="info-value"><strong>{{ $typeAide }}</strong></span>
+                </div>
+                @endif
+
+                @if($localisation)
+                <div class="info-row">
+                    <span class="info-label">Localisation</span>
+                    <span class="info-value">
+                        {{ $localisation }}
+                        @if($carteUrl)
+                            <br><a href="{{ $carteUrl }}">📍 Voir la position GPS sur la carte</a>
+                        @endif
+                    </span>
+                </div>
+                @endif
+
                 <div class="info-row">
                     <span class="info-label">Date d'envoi</span>
                     <span class="info-value">{{ $date }}</span>
@@ -197,10 +223,15 @@
                 </p>
             </div>
 
-            @if(str_contains($objet, 'Urgence'))
+            @if($estSos || str_contains($objet, 'Urgence'))
             <div style="background: #fee2e2; border-radius: 10px; padding: 15px; margin: 20px 0;">
                 <p style="margin: 0; color: #dc2626;">
-                    <strong>⚠️ Attention :</strong> Ce message est marqué comme urgent. Veuillez y répondre dans les plus brefs délais.
+                    @if($estSos)
+                        <strong>🆘 Alerte SOS :</strong> une personne demande de l'aide. Rappelez-la par téléphone dès que possible
+                        @if($email === 'Non renseigné') (aucun e-mail n'a été fourni) @endif.
+                    @else
+                        <strong>⚠️ Attention :</strong> Ce message est marqué comme urgent. Veuillez y répondre dans les plus brefs délais.
+                    @endif
                 </p>
             </div>
             @endif

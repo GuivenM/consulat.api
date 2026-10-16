@@ -72,6 +72,8 @@
                     @case('partenariat') Demande de partenariat @break
                     @case('service_consulaire') Question sur une démarche @break
                     @case('urgence') Urgence communautaire @break
+                    @case('audience') Demande d'audience @break
+                    @case('sos') Demande d'aide (SOS) @break
                     @default Autre
                 @endswitch
             </p>

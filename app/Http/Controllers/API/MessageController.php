@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class MessageController extends Controller
 {
@@ -66,13 +67,23 @@ class MessageController extends Controller
     public function store(Request $request)
     {
         try {
+            // SOS : le téléphone suffit (une personne en détresse n'a pas
+            // forcément d'e-mail), mais le type d'aide et la localisation
+            // sont indispensables pour intervenir.
+            $estSos = $request->input('objet') === 'sos';
+
             $validator = Validator::make($request->all(), [
                 'nom' => 'required|string|max:255',
                 'prenom' => 'required|string|max:255',
-                'email' => 'required|email|max:255',
+                'email' => ($estSos ? 'nullable' : 'required') . '|email|max:255',
                 'telephone' => 'required|string|max:20',
-                'objet' => 'required|in:question,partenariat,service_consulaire,urgence,autre',
+                'objet' => 'required|in:question,partenariat,service_consulaire,urgence,audience,sos,autre',
                 'message' => 'required|string',
+                'date_souhaitee' => 'nullable|date|after_or_equal:today',
+                'type_aide' => [Rule::requiredIf($estSos), 'nullable', Rule::in(array_keys(Message::TYPES_AIDE))],
+                'localisation' => [Rule::requiredIf($estSos), 'nullable', 'string', 'max:255'],
+                'latitude' => 'nullable|numeric|between:-90,90',
+                'longitude' => 'nullable|numeric|between:-180,180',
                 'organisation' => 'required_if:objet,partenariat|nullable|string|max:255',
                 'type_organisation' => 'nullable|in:institution,ong,entreprise,media,universite,association',
                 'secteur_activite' => 'nullable|string|max:255',
@@ -91,13 +102,26 @@ class MessageController extends Controller
             // IMPORTANT : uniquement les champs validés. 'statut', 'reponse' et
             // 'traite_par' sont fillable sur le modèle mais ne doivent jamais être
             // fixables par un appelant public (route non authentifiée).
-            $message = Message::create($validator->validated());
+            $donnees = $validator->validated();
 
-            // Envoyer email de confirmation à l'utilisateur
-            try {
-                Mail::to($message->email)->send(new ConfirmationMessage($message));
-            } catch (\Exception $e) {
-                \Log::error('Erreur envoi email confirmation message: ' . $e->getMessage());
+            // Les champs propres à l'audience et au SOS ne sont conservés que
+            // pour leur objet : un autre formulaire ne doit pas les remplir.
+            if ($donnees['objet'] !== 'audience') {
+                unset($donnees['date_souhaitee']);
+            }
+            if (!$estSos) {
+                unset($donnees['type_aide'], $donnees['localisation'], $donnees['latitude'], $donnees['longitude']);
+            }
+
+            $message = Message::create($donnees);
+
+            // Envoyer email de confirmation à l'utilisateur (s'il en a donné un)
+            if ($message->email) {
+                try {
+                    Mail::to($message->email)->send(new ConfirmationMessage($message));
+                } catch (\Exception $e) {
+                    \Log::error('Erreur envoi email confirmation message: ' . $e->getMessage());
+                }
             }
 
             // Envoyer notification à l'admin pour le nouveau message
@@ -109,10 +133,11 @@ class MessageController extends Controller
                 if ($adminEmail) {
                     Mail::to($adminEmail)->send(new NotificationNouveauMessage($message));
                 } else {
-                    \Log::warning('Nouveau message de contact : aucun destinataire admin (MAIL_ADMIN_ADDRESS ou email de l\'entité).');
+                    // Un SOS sans destinataire est une alerte perdue : niveau critical.
+                    \Log::log($estSos ? 'critical' : 'warning', 'Nouveau message de contact (' . $message->objet . ') : aucun destinataire admin (MAIL_ADMIN_ADDRESS ou email de l\'entité).');
                 }
             } catch (\Exception $e) {
-                \Log::error('Erreur envoi email notification admin message: ' . $e->getMessage());
+                \Log::log($estSos ? 'critical' : 'error', 'Erreur envoi email notification admin message (' . $message->objet . '): ' . $e->getMessage());
             }
 
             return response()->json([
@@ -354,6 +379,8 @@ class MessageController extends Controller
                     'partenariat' => Message::where('objet', 'partenariat')->count(),
                     'service_consulaire' => Message::where('objet', 'service_consulaire')->count(),
                     'urgence' => Message::where('objet', 'urgence')->count(),
+                    'audience' => Message::where('objet', 'audience')->count(),
+                    'sos' => Message::where('objet', 'sos')->count(),
                     'autre' => Message::where('objet', 'autre')->count(),
                 ]
             ];
