@@ -56,6 +56,9 @@ class NotificationNouveauMessage extends Mailable
                         'estSos' => $estSos,
                         'dateSouhaitee' => $this->message->date_souhaitee?->format('d/m/Y'),
                         'typeAide' => $this->message->type_aide_label,
+                        'piece' => $this->message->piece_type
+                            ? trim($this->message->piece_type_label . ' ' . ($this->message->piece_numero ?? '')) . ' (copie jointe, à consulter dans le dashboard)'
+                            : null,
                         'localisation' => $this->message->localisation,
                         'carteUrl' => ($this->message->latitude !== null && $this->message->longitude !== null)
                             ? 'https://www.google.com/maps?q=' . $this->message->latitude . ',' . $this->message->longitude

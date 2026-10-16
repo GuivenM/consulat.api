@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class MessageController extends Controller
@@ -62,6 +63,29 @@ class MessageController extends Controller
     }
 
     /**
+     * Affiche la pièce d'identité jointe à une demande d'audience (disque privé).
+     *
+     * GET /v1/messages/{id}/piece
+     */
+    public function piece($id)
+    {
+        $message = Message::find($id);
+
+        if (!$message || !$message->piece_fichier
+            || !Storage::disk('local')->exists($message->piece_fichier)) {
+            return response()->json(['success' => false, 'message' => 'Pièce introuvable'], 404);
+        }
+
+        $nom = $message->piece_fichier_nom ?: basename($message->piece_fichier);
+
+        return Storage::disk('local')->response(
+            $message->piece_fichier,
+            $nom,
+            ['Content-Disposition' => 'inline; filename="' . addslashes($nom) . '"']
+        );
+    }
+
+    /**
      * Créer un nouveau message
      */
     public function store(Request $request)
@@ -71,6 +95,7 @@ class MessageController extends Controller
             // forcément d'e-mail), mais le type d'aide et la localisation
             // sont indispensables pour intervenir.
             $estSos = $request->input('objet') === 'sos';
+            $estAudience = $request->input('objet') === 'audience';
 
             $validator = Validator::make($request->all(), [
                 'nom' => 'required|string|max:255',
@@ -84,12 +109,22 @@ class MessageController extends Controller
                 'localisation' => [Rule::requiredIf($estSos), 'nullable', 'string', 'max:255'],
                 'latitude' => 'nullable|numeric|between:-90,90',
                 'longitude' => 'nullable|numeric|between:-180,180',
+                // Audience : pièce d'identité (type + fichier) obligatoire.
+                'piece_type' => [Rule::requiredIf($estAudience), 'nullable', Rule::in(Message::TYPES_PIECE_AUDIENCE)],
+                'piece_numero' => 'nullable|string|max:50',
+                'piece_fichier' => [Rule::requiredIf($estAudience), 'nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
                 'organisation' => 'required_if:objet,partenariat|nullable|string|max:255',
                 'type_organisation' => 'nullable|in:institution,ong,entreprise,media,universite,association',
                 'secteur_activite' => 'nullable|string|max:255',
                 'pays' => 'nullable|string|max:255',
                 'ville' => 'nullable|string|max:255',
                 'site_web' => 'nullable|string|max:255',
+            ], [
+                'piece_type.required' => "Choisissez le type de pièce d'identité.",
+                'piece_fichier.required' => "Joignez la copie de votre pièce d'identité (PDF ou image).",
+                'piece_fichier.mimes' => 'La pièce doit être un fichier PDF, JPG ou PNG.',
+                'piece_fichier.max' => 'La pièce ne doit pas dépasser 5 Mo.',
+                'piece_fichier.uploaded' => "Le fichier n'a pas pu être envoyé (5 Mo maximum).",
             ]);
 
             if ($validator->fails()) {
@@ -112,8 +147,28 @@ class MessageController extends Controller
             if (!$estSos) {
                 unset($donnees['type_aide'], $donnees['localisation'], $donnees['latitude'], $donnees['longitude']);
             }
+            unset($donnees['piece_fichier']);
+            if (!$estAudience) {
+                unset($donnees['piece_type'], $donnees['piece_numero']);
+            }
 
-            $message = Message::create($donnees);
+            // Pièce d'identité de l'audience : disque privé, jamais public.
+            $cheminPiece = null;
+            if ($estAudience && $request->hasFile('piece_fichier')) {
+                $fichier = $request->file('piece_fichier');
+                $cheminPiece = $fichier->store('messages/pieces', 'local');
+                $donnees['piece_fichier'] = $cheminPiece;
+                $donnees['piece_fichier_nom'] = mb_substr($fichier->getClientOriginalName(), 0, 255);
+            }
+
+            try {
+                $message = Message::create($donnees);
+            } catch (\Throwable $e) {
+                if ($cheminPiece) {
+                    Storage::disk('local')->delete($cheminPiece);
+                }
+                throw $e;
+            }
 
             // Envoyer email de confirmation à l'utilisateur (s'il en a donné un)
             if ($message->email) {
@@ -255,6 +310,9 @@ class MessageController extends Controller
     {
         try {
             $message = Message::findOrFail($id);
+            if ($message->piece_fichier) {
+                Storage::disk('local')->delete($message->piece_fichier);
+            }
             $message->delete();
 
             return response()->json([

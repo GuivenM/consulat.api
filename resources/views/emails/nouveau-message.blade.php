@@ -191,6 +191,13 @@
                 </div>
                 @endif
 
+                @if($piece)
+                <div class="info-row">
+                    <span class="info-label">Pièce d'identité</span>
+                    <span class="info-value">{{ $piece }}</span>
+                </div>
+                @endif
+
                 @if($typeAide)
                 <div class="info-row">
                     <span class="info-label">Type d'aide</span>

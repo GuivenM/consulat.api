@@ -149,6 +149,8 @@ Route::middleware(['auth:sanctum', 'actor:staff'])->prefix('v1')->group(function
             ->middleware('role:super_admin,admin,agent');
         Route::get('/{id}', [MessageController::class, 'show'])
             ->middleware('role:super_admin,admin,agent');
+        Route::get('/{id}/piece', [MessageController::class, 'piece'])
+            ->middleware('role:super_admin,admin,agent');
         Route::put('/{id}', [MessageController::class, 'update'])
             ->middleware('role:super_admin,admin');
         Route::post('/{id}/repondre', [MessageController::class, 'repondre'])

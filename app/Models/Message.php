@@ -30,6 +30,12 @@ class Message extends Model
         'autre' => 'Autre situation urgente',
     ];
 
+    /**
+     * Pièces d'identité acceptées pour une demande d'audience (sous-ensemble
+     * de Ressortissant::TYPES_PIECE).
+     */
+    public const TYPES_PIECE_AUDIENCE = ['passeport', 'cni', 'cip_etranger'];
+
     protected $fillable = [
         'entity_id',
         'nom',
@@ -43,6 +49,10 @@ class Message extends Model
         'localisation',
         'latitude',
         'longitude',
+        'piece_type',
+        'piece_numero',
+        'piece_fichier',
+        'piece_fichier_nom',
         'organisation',
         'type_organisation',
         'secteur_activite',
@@ -103,7 +113,11 @@ class Message extends Model
         return $query->where('objet', $objet);
     }
 
-    protected $appends = ['nom_complet', 'objet_label', 'statut_label', 'statut_color', 'date_envoi', 'date_envoi_fr', 'extrait', 'type_aide_label'];
+    // Chemin du fichier sur le disque privé : jamais exposé dans le JSON, le
+    // fichier ne se télécharge que via la route admin dédiée.
+    protected $hidden = ['piece_fichier'];
+
+    protected $appends = ['nom_complet', 'objet_label', 'statut_label', 'statut_color', 'date_envoi', 'date_envoi_fr', 'extrait', 'type_aide_label', 'piece_type_label', 'piece_fichier_disponible'];
 
     /**
      * Accesseurs
@@ -131,6 +145,16 @@ class Message extends Model
     public function getTypeAideLabelAttribute()
     {
         return self::TYPES_AIDE[$this->type_aide] ?? $this->type_aide;
+    }
+
+    public function getPieceTypeLabelAttribute()
+    {
+        return Ressortissant::TYPES_PIECE[$this->piece_type] ?? $this->piece_type;
+    }
+
+    public function getPieceFichierDisponibleAttribute()
+    {
+        return !empty($this->attributes['piece_fichier'] ?? null);
     }
 
     public function getStatutLabelAttribute()
