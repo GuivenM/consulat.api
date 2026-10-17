@@ -32,7 +32,9 @@ class DemandeController extends Controller
      */
     public function configuration(Request $request, string $type)
     {
-        $tarifs = Tarif::actif()->pourType($type)->orderBy('montant')->get();
+        $tarifs = Tarif::actif()->pourType($type)->get()
+            ->sortBy(fn (Tarif $t) => Tarif::rang($t->delai))
+            ->values();
 
         if ($tarifs->isEmpty()) {
             return response()->json([

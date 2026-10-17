@@ -23,8 +23,8 @@ class ServicesPubliqueController extends Controller
     public function index()
     {
         $tarifsParType = Tarif::actif()
-            ->orderBy('delai_heures')
             ->get()
+            ->sortBy(fn (Tarif $t) => Tarif::rang($t->delai))
             ->groupBy('type_demande')
             ->map(function ($tarifs) {
                 return [

@@ -33,11 +33,35 @@ class Tarif extends Model
         'updated_at' => 'datetime',
     ];
 
+    /**
+     * Délais proposés, du plus rapide au plus long. L'ordre de ce tableau
+     * est l'ordre d'affichage partout (site public, admin, dépôt de demande),
+     * quel que soit l'ordre dans lequel les tarifs ont été créés.
+     */
     public const DELAIS = [
-        '3_jours' => '3 jours ouvrés',
-        '24h' => '24 heures',
         'meme_jour' => 'Le jour même',
+        '24h' => '24 heures',
+        '3_jours' => '3 jours ouvrés',
+        '1_semaine' => '1 semaine',
+        '2_semaines' => '2 semaines',
     ];
+
+    /** Délai de traitement en heures par défaut, pour la date de disponibilité prévisionnelle. */
+    public const HEURES_PAR_DEFAUT = [
+        'meme_jour' => 8,
+        '24h' => 24,
+        '3_jours' => 72,
+        '1_semaine' => 168,
+        '2_semaines' => 336,
+    ];
+
+    /** Rang d'un délai dans DELAIS (les délais inconnus passent en dernier). */
+    public static function rang(?string $delai): int
+    {
+        $position = array_search($delai, array_keys(self::DELAIS), true);
+
+        return $position === false ? 99 : $position;
+    }
 
     /**
      * Résout le tarif applicable à une demande. Lève une exception si

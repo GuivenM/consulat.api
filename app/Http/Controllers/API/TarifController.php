@@ -24,10 +24,8 @@ class TarifController extends Controller
             $query->where('type_demande', $request->string('type_demande'));
         }
 
-        $ordreDelai = array_flip(array_keys(Tarif::DELAIS));
-
         $tarifs = $query->get()
-            ->sortBy(fn (Tarif $t) => [$t->type_demande, $ordreDelai[$t->delai] ?? 99])
+            ->sortBy(fn (Tarif $t) => [$t->type_demande, Tarif::rang($t->delai)])
             ->values();
 
         return response()->json([
@@ -54,6 +52,7 @@ class TarifController extends Controller
         $data = $validator->validated();
         $data['devise'] = $data['devise'] ?? 'XOF';
         $data['est_actif'] = $data['est_actif'] ?? true;
+        $data['delai_heures'] = $data['delai_heures'] ?? (Tarif::HEURES_PAR_DEFAUT[$data['delai']] ?? null);
 
         $tarif = Tarif::create($data);
 
