@@ -25,6 +25,62 @@ class Quartiers
         return self::$cache;
     }
 
+    private static ?array $geo = null;
+
+    /**
+     * Coordonnées approximatives (centre du quartier / de la commune), pour
+     * placer sur la carte admin les ressortissants sans position GPS.
+     * Source : database/data/quartiers_coordonnees.json ; un quartier absent
+     * du fichier retombe sur le centre de sa commune.
+     */
+    private static function geo(): array
+    {
+        if (self::$geo === null) {
+            $chemin = database_path('data/quartiers_coordonnees.json');
+            $donnees = is_file($chemin) ? json_decode(file_get_contents($chemin), true) : null;
+            self::$geo = is_array($donnees) ? $donnees : [];
+        }
+
+        return self::$geo;
+    }
+
+    /** [latitude, longitude] du centre d'une commune, ou null. */
+    public static function centreVille(?string $ville): ?array
+    {
+        if (!$ville) {
+            return null;
+        }
+
+        foreach (self::geo()['villes'] ?? [] as $commune => $coords) {
+            if (self::cle($commune) === self::cle($ville)) {
+                return $coords;
+            }
+        }
+
+        return null;
+    }
+
+    /** [latitude, longitude] d'un quartier connu, ou null. */
+    public static function coordonnees(?string $ville, ?string $quartier): ?array
+    {
+        if (!$ville || !$quartier) {
+            return null;
+        }
+
+        foreach (self::geo()['quartiers'] ?? [] as $commune => $liste) {
+            if (self::cle($commune) !== self::cle($ville)) {
+                continue;
+            }
+            foreach ($liste as $nom => $coords) {
+                if (self::cle($nom) === self::cle($quartier)) {
+                    return $coords;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static function cle(string $texte): string
     {
         return Str::lower(Str::ascii(trim($texte)));

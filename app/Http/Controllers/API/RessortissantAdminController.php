@@ -221,11 +221,62 @@ class RessortissantAdminController extends Controller
                 'longitude' => $r->longitude,
             ]);
 
+        // Ressortissants sans position GPS : placés au centre de leur quartier
+        // (ou, à défaut, de leur commune) pour apparaître quand même sur la
+        // carte, de façon approximative. Les quartiers inconnus d'une même
+        // commune sont regroupés en un seul repère au centre de la commune.
+        $sansGps = Ressortissant::where(fn ($q) => $q->whereNull('latitude')->orWhereNull('longitude'))
+            ->whereNotNull('ville')
+            ->selectRaw('ville, quartier, statut, count(*) as total')
+            ->groupBy('ville', 'quartier', 'statut')
+            ->get();
+
+        $approximatifs = [];
+        $sansPosition = 0;
+
+        foreach ($sansGps as $ligne) {
+            $coords = Quartiers::coordonnees($ligne->ville, $ligne->quartier);
+            $precision = 'quartier';
+
+            if (!$coords) {
+                $coords = Quartiers::centreVille($ligne->ville);
+                $precision = 'ville';
+            }
+
+            if (!$coords) {
+                $sansPosition += $ligne->total;
+                continue;
+            }
+
+            $cle = $precision === 'quartier' ? $ligne->ville . '|' . $ligne->quartier : $ligne->ville . '|*';
+
+            $approximatifs[$cle] ??= [
+                'ville' => $ligne->ville,
+                'quartier' => $precision === 'quartier' ? $ligne->quartier : null,
+                'precision' => $precision,
+                'latitude' => $coords[0],
+                'longitude' => $coords[1],
+                'total' => 0,
+                'par_statut' => [],
+                'quartiers' => [],
+            ];
+
+            $approximatifs[$cle]['total'] += $ligne->total;
+            $approximatifs[$cle]['par_statut'][$ligne->statut] = ($approximatifs[$cle]['par_statut'][$ligne->statut] ?? 0) + $ligne->total;
+
+            if ($precision === 'ville') {
+                $nom = $ligne->quartier ?: 'Quartier non renseigné';
+                $approximatifs[$cle]['quartiers'][$nom] = ($approximatifs[$cle]['quartiers'][$nom] ?? 0) + $ligne->total;
+            }
+        }
+
         return response()->json([
             'success' => true,
             'data' => [
                 'par_quartier' => $parQuartier,
                 'points' => $points,
+                'approximatifs' => array_values($approximatifs),
+                'sans_position' => $sansPosition,
             ],
         ]);
     }
