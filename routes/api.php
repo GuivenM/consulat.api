@@ -11,6 +11,7 @@ use App\Http\Controllers\API\RealisationController;
 use App\Http\Controllers\API\NewsletterController;
 use App\Http\Controllers\API\StatistiquesPubliquesController;
 use App\Http\Controllers\API\CartePubliqueController;
+use App\Http\Controllers\API\ServiceController;
 use App\Http\Controllers\API\ServicesPubliqueController;
 use App\Http\Controllers\API\UtilisateurController;
 use App\Http\Controllers\API\JournalActiviteController;
@@ -336,6 +337,7 @@ Route::prefix('v1/admin/ressortissants')->middleware(['auth:sanctum', 'role:supe
 // pure, réservée à admin/super_admin (un agent traite des dossiers, il ne
 // change pas les tarifs).
 Route::middleware(['auth:sanctum', 'role:super_admin,admin'])->prefix('v1/admin')->group(function () {
+    Route::apiResource('services', ServiceController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::apiResource('tarifs', TarifController::class)->only(['index', 'store', 'update', 'destroy']);
     Route::apiResource('document-types-requis', DocumentTypeRequisController::class)->only(['index', 'store', 'update', 'destroy']);
 });

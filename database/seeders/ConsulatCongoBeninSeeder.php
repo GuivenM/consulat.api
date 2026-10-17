@@ -20,8 +20,35 @@ class ConsulatCongoBeninSeeder extends Seeder
 
     public function run(): void
     {
+        $this->services();
         $this->tarifs();
         $this->documentsRequis();
+    }
+
+    /**
+     * Services de départ (modifiables ensuite depuis l'espace admin ; un
+     * service déjà présent n'est pas écrasé).
+     */
+    private function services(): void
+    {
+        $services = [
+            'carte_consulaire' => ['Carte consulaire', "Document qui atteste de votre inscription au registre consulaire et facilite vos démarches auprès des autorités béninoises."],
+            'laissez_passer' => ['Laissez-passer', "Titre de voyage provisoire délivré en cas de perte, de vol ou d'expiration de votre passeport congolais."],
+        ];
+
+        $ordre = 1;
+        foreach ($services as $code => [$nom, $description]) {
+            DB::table('services')->insertOrIgnore([
+                'entity_id' => self::ENTITY_ID,
+                'code' => $code,
+                'nom' => $nom,
+                'description' => $description,
+                'ordre' => $ordre++,
+                'est_actif' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 
     /**

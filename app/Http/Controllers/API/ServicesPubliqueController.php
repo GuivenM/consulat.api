@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\DocumentTypeRequis;
+use App\Models\Service;
 use App\Models\Tarif;
 
 /**
@@ -55,16 +56,20 @@ class ServicesPubliqueController extends Controller
                 ])->values();
             });
 
-        $types = collect(array_unique(array_merge(
-            $tarifsParType->keys()->all(),
-            $piecesParType->keys()->all()
-        )));
-
-        $services = $types->map(fn (string $type) => [
-            'type_demande' => $type,
-            'tarif' => $tarifsParType->get($type),
-            'pieces_requises' => $piecesParType->get($type, collect()),
-        ])->values();
+        // La liste des services (et leur ordre) vient de l'espace admin :
+        // seuls les services actifs sont publiés.
+        $services = Service::actif()
+            ->orderBy('ordre')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (Service $s) => [
+                'type_demande' => $s->code,
+                'nom' => $s->nom,
+                'description' => $s->description,
+                'tarif' => $tarifsParType->get($s->code),
+                'pieces_requises' => $piecesParType->get($s->code, collect()),
+            ])
+            ->values();
 
         return response()->json([
             'success' => true,
